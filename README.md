@@ -118,6 +118,4 @@ Keyboard tips:
 - Automation builder (if/then UI)  
 - Public board publishing with read-only share links
 
-> Want something added? Open an issue titled `Feature: <name>` with a short user story.
-
 ---
