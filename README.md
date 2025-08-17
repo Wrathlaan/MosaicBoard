@@ -121,6 +121,3 @@ Keyboard tips:
 > Want something added? Open an issue titled `Feature: <name>` with a short user story.
 
 ---
-
-## 📁 Suggested Structure
-
