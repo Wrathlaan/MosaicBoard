@@ -1,10 +1,18 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
+import {
+  argbFromHex,
+  themeFromSourceColor,
+  applyTheme,
+  sourceColorFromImage,
+  Theme as M3Theme,
+  hexFromArgb
+} from "@material/material-color-utilities";
 
 // --- THEME ---
 interface Theme {
     mode: 'system' | 'light' | 'dark';
-    accent: string;
+    sourceColor: string;
     radius: number;
     density: 'compact' | 'comfortable' | 'cozy';
     fontScale: number;
@@ -15,7 +23,7 @@ interface Theme {
 
 const DEFAULT_THEME: Theme = {
     mode: 'system',
-    accent: '#0079BF', // Calm Blue
+    sourceColor: '#0079BF', // Calm Blue
     radius: 10,
     density: 'comfortable',
     fontScale: 1.00,
@@ -39,12 +47,31 @@ const useTheme = () => {
         return DEFAULT_THEME;
     });
 
+    const [customCss, setCustomCss] = useState<{ [key: string]: string }>(() => {
+        try {
+            const saved = localStorage.getItem('mosaic.customCss');
+            return saved ? JSON.parse(saved) : {};
+        } catch (e) {
+            console.error("Failed to parse custom CSS from localStorage", e);
+            return {};
+        }
+    });
+
+    const m3Theme = useMemo(() => {
+        return themeFromSourceColor(argbFromHex(theme.sourceColor));
+    }, [theme.sourceColor]);
+    
     const updateTheme = useCallback((updates: Partial<Theme>) => {
         setTheme(prev => ({ ...prev, ...updates }));
     }, []);
 
+    const updateCustomCss = useCallback((newCss: { [key: string]: string }) => {
+        setCustomCss(newCss);
+    }, []);
+
     const resetTheme = useCallback(() => {
         setTheme(DEFAULT_THEME);
+        setCustomCss({});
     }, []);
 
     const exportTheme = useCallback(() => {
@@ -93,6 +120,8 @@ const useTheme = () => {
         const effectiveMode = theme.mode === 'system'
             ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
             : theme.mode;
+        
+        applyTheme(m3Theme, { target: docEl, dark: effectiveMode === 'dark' });
 
         docEl.setAttribute('data-theme', effectiveMode);
         docEl.setAttribute('data-density', theme.density);
@@ -100,7 +129,6 @@ const useTheme = () => {
         docEl.setAttribute('data-reduced-motion', String(theme.reducedMotion));
         docEl.setAttribute('data-board-width', theme.boardWidth);
         
-        docEl.style.setProperty('--accent', theme.accent);
         docEl.style.setProperty('--radius', `${theme.radius}px`);
         docEl.style.fontSize = `${16.5 * theme.fontScale}px`;
         
@@ -113,21 +141,40 @@ const useTheme = () => {
              docEl.setAttribute('data-reduced-motion', 'false');
         }
 
-    }, [theme]);
+    }, [theme, m3Theme]);
+
+    useEffect(() => {
+        localStorage.setItem('mosaic.customCss', JSON.stringify(customCss));
+        const styleId = 'mosaic-custom-styles';
+        let styleEl = document.getElementById(styleId);
+        if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = styleId;
+            document.head.appendChild(styleEl);
+        }
+        const cssString = Object.entries(customCss)
+            .map(([selector, rules]) => {
+                if (rules && rules.trim()) return `${selector} { ${rules} }`;
+                return '';
+            })
+            .join('\n');
+        styleEl.innerHTML = cssString;
+    }, [customCss]);
 
     useEffect(() => {
         const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-        const handleChange = () => {
+        const handleChange = (e: MediaQueryListEvent) => {
             if (theme.mode === 'system') {
-                document.documentElement.setAttribute('data-theme', mediaQuery.matches ? 'dark' : 'light');
+                applyTheme(m3Theme, { target: document.documentElement, dark: e.matches });
+                document.documentElement.setAttribute('data-theme', e.matches ? 'dark' : 'light');
             }
         };
 
         mediaQuery.addEventListener('change', handleChange);
         return () => mediaQuery.removeEventListener('change', handleChange);
-    }, [theme.mode]);
+    }, [theme.mode, m3Theme]);
 
-    return { theme, updateTheme, resetTheme, exportTheme, importTheme };
+    return { theme, updateTheme, resetTheme, exportTheme, importTheme, customCss, updateCustomCss };
 };
 
 
@@ -568,31 +615,31 @@ const Card = ({ card, isHidden, onDragStart, onDragEnd, onClick, availableLabels
   }, { total: 0, completed: 0 });
   const dueDateStatus = getDueDateStatus(dueDate);
   
-  const isFullCover = cover.imageUrl && cover.size === 'full';
-  const cardStyle = isFullCover ? { backgroundImage: `url(${cover.imageUrl})` } : {};
+  const hasImageCover = !!cover.imageUrl;
 
   return (
     <div
-      className={`card ${isHidden ? 'is-hidden' : ''} ${isFullCover ? 'has-full-cover' : ''}`}
-      style={cardStyle}
+      className={`card ${isHidden ? 'is-hidden' : ''} ${hasImageCover ? 'has-image-cover' : ''}`}
       draggable="true"
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onClick={onClick}
     >
-      {!isFullCover && cover.imageUrl && <img src={cover.imageUrl} alt="Card cover" className="card-cover-img" />}
-      {!isFullCover && cover.color && !cover.imageUrl && <div className="card-cover-color" style={{ backgroundColor: cover.color }} />}
+      {hasImageCover && <img src={cover.imageUrl} className="card-cover-image" alt="" />}
+      {!hasImageCover && cover.color && <div className="card-cover-color" style={{ backgroundColor: cover.color }} />}
       
       <div className="card-content-wrapper">
-        {labels.length > 0 && (
-          <div className="card-labels">
-            {labels.map(labelId => {
-                const label = availableLabels.find(l => l.id === labelId);
-                return label ? <span key={label.id} className="card-label" style={{ backgroundColor: label.color }} title={label.text} /> : null;
-            })}
-          </div>
-        )}
-        <p className="card-text">{text}</p>
+        <div className="card-content-main">
+            {labels.length > 0 && (
+              <div className="card-labels">
+                {labels.map(labelId => {
+                    const label = availableLabels.find(l => l.id === labelId);
+                    return label ? <span key={label.id} className="card-label" style={{ backgroundColor: label.color }} title={label.text} /> : null;
+                })}
+              </div>
+            )}
+            <p className="card-text">{text}</p>
+        </div>
         <div className="card-footer">
           <div className="card-badges">
             {dueDate.timestamp && (
@@ -1657,7 +1704,7 @@ const DashboardView = ({ boardData, availableLabels, availableMembers }) => {
                                 className="chart-bar" 
                                 style={{
                                     width: `${maxCount > 0 ? (item.count / maxCount) * 100 : 0}%`,
-                                    backgroundColor: item[colorProp] || 'var(--accent)'
+                                    backgroundColor: item[colorProp] || 'var(--md-sys-color-primary)'
                                 }}
                             />
                         </div>
@@ -1928,10 +1975,47 @@ const CustomFieldsModal = ({ isOpen, onClose, definitions, onUpdate }) => {
     );
 };
 
-const AppearanceSettings = ({ theme, updateTheme, resetTheme, exportTheme, importTheme }) => {
+const PalettePreview = ({ sourceColor }: { sourceColor: string }) => {
+    const colors = useMemo(() => {
+        if (!sourceColor || !/^#([0-9A-F]{3}){1,2}$/i.test(sourceColor)) {
+            // Return a default/fallback palette for invalid color strings
+            return ['#cccccc', '#bbbbbb', '#aaaaaa', '#999999'];
+        }
+        try {
+            const theme = themeFromSourceColor(argbFromHex(sourceColor));
+            // Using tones for light theme as a consistent preview
+            return [
+                hexFromArgb(theme.palettes.primary.tone(40)),
+                hexFromArgb(theme.palettes.secondary.tone(40)),
+                hexFromArgb(theme.palettes.tertiary.tone(40)),
+                hexFromArgb(theme.palettes.neutral.tone(94)),
+            ];
+        } catch (e) {
+            console.error("Error generating palette preview:", e);
+            return ['#cccccc', '#bbbbbb', '#aaaaaa', '#999999'];
+        }
+    }, [sourceColor]);
+
+    return (
+        <div className="palette-preview">
+            {colors.map((color, index) => (
+                <div key={`${color}-${index}`} className="palette-preview-swatch" style={{ backgroundColor: color }} />
+            ))}
+        </div>
+    );
+};
+
+const AppearanceSettings = ({ theme, updateTheme, resetTheme, exportTheme, importTheme, onOpenElementCustomizer }) => {
     const importInputRef = useRef<HTMLInputElement>(null);
-    const ACCENT_PRESETS = ['#0079BF', '#d6262e', '#ff9f1a', '#61bd4f', '#a064bf', '#f2d600'];
     const BOARD_BACKGROUNDS: Theme['boardBackground'][] = ['none', 'dots', 'grid', 'noise', 'nebula'];
+    const PRESET_THEMES = [
+        { name: 'Default', sourceColor: '#6750A4' }, // M3 Default
+        { name: 'Calm Blue', sourceColor: '#0079BF' },
+        { name: 'Forest', sourceColor: '#4CAF50' },
+        { name: 'Sunrise', sourceColor: '#FF9800' },
+        { name: 'Ruby', sourceColor: '#E91E63' },
+        { name: 'Orchid', sourceColor: '#9d55c7' },
+    ];
     
     const handleImportClick = () => {
         importInputRef.current?.click();
@@ -1960,18 +2044,32 @@ const AppearanceSettings = ({ theme, updateTheme, resetTheme, exportTheme, impor
                 </div>
 
                 <div className="setting-item">
-                    <h5>Accent Color</h5>
-                    <div className="accent-picker">
-                        {ACCENT_PRESETS.map(color => (
+                    <h5>Color Palette</h5>
+                    <div className="preset-palettes">
+                        {PRESET_THEMES.map(preset => (
                             <button
-                                key={color}
-                                className={`accent-swatch ${theme.accent.toLowerCase() === color.toLowerCase() ? 'active' : ''}`}
-                                style={{ backgroundColor: color }}
-                                onClick={() => updateTheme({ accent: color })}
-                                aria-label={`Set accent color to ${color}`}
-                            />
+                                key={preset.name}
+                                className={`preset-palette-btn ${theme.sourceColor.toLowerCase() === preset.sourceColor.toLowerCase() ? 'active' : ''}`}
+                                onClick={() => updateTheme({ sourceColor: preset.sourceColor })}
+                                aria-label={`Set palette to ${preset.name}`}
+                            >
+                                <PalettePreview sourceColor={preset.sourceColor} />
+                                <span>{preset.name}</span>
+                            </button>
                         ))}
-                        <input type="color" value={theme.accent} onChange={e => updateTheme({ accent: e.target.value })} className="accent-swatch custom" />
+                    </div>
+                    <div className="accent-picker">
+                        <input
+                            type="color"
+                            value={theme.sourceColor}
+                            onChange={e => updateTheme({ sourceColor: e.target.value })}
+                            className="accent-swatch custom"
+                            aria-label="Custom source color"
+                        />
+                        <div className="custom-color-details">
+                            <span>Custom Source</span>
+                            <PalettePreview sourceColor={theme.sourceColor} />
+                        </div>
                     </div>
                 </div>
                 
@@ -2041,10 +2139,11 @@ const AppearanceSettings = ({ theme, updateTheme, resetTheme, exportTheme, impor
                 <div className="setting-item">
                     <h5>Theme Actions</h5>
                     <div className="theme-actions">
+                        <button className="sidebar-btn full-width" onClick={onOpenElementCustomizer}><Icon name="code" size={20}/> Customize Elements</button>
                         <button className="sidebar-btn" onClick={exportTheme}>Export</button>
                         <button className="sidebar-btn" onClick={handleImportClick}>Import</button>
                         <input type="file" ref={importInputRef} onChange={handleFileImport} accept=".mbtheme" style={{ display: 'none' }} />
-                        <button className="sidebar-btn delete" onClick={resetTheme}>Reset to Defaults</button>
+                        <button className="sidebar-btn delete full-width" onClick={resetTheme}>Reset to Defaults</button>
                     </div>
                 </div>
                 
@@ -2072,13 +2171,14 @@ const AppearanceSettings = ({ theme, updateTheme, resetTheme, exportTheme, impor
     );
 };
 
-const SettingsModal = ({ isOpen, onClose, onClearData, theme, updateTheme, resetTheme, exportTheme, importTheme }) => {
+const SettingsModal = ({ isOpen, onClose, onClearData, theme, updateTheme, resetTheme, exportTheme, importTheme, onOpenElementCustomizer }) => {
     if (!isOpen) return null;
     const [activeTab, setActiveTab] = useState('appearance');
 
     const licenses = [
         { name: 'React & React DOM', license: 'MIT License', url: 'https://github.com/facebook/react/blob/main/LICENSE' },
         { name: 'Geist Sans & Mono Fonts', license: 'SIL Open Font License 1.1', url: 'https://github.com/vercel/geist-font/blob/main/LICENSE' },
+        { name: 'Material Color Utilities', license: 'Apache License 2.0', url: 'https://github.com/material-foundation/material-color-utilities/blob/main/LICENSE' },
     ];
 
     const handleClearData = () => {
@@ -2133,9 +2233,102 @@ const SettingsModal = ({ isOpen, onClose, onClearData, theme, updateTheme, reset
                                 resetTheme={resetTheme}
                                 exportTheme={exportTheme}
                                 importTheme={importTheme}
+                                onOpenElementCustomizer={onOpenElementCustomizer}
                             />
                         )}
                     </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const CUSTOMIZABLE_ELEMENTS = [
+    { name: 'Main Header', selector: 'header' },
+    { name: 'Board', selector: '.board' },
+    { name: 'List', selector: '.list-container' },
+    { name: 'List Header', selector: '.list-header .list-title' },
+    { name: 'Card', selector: '.card' },
+    { name: 'Primary Button', selector: '.action-button' },
+    { name: 'Secondary Button', selector: '.sidebar-btn' },
+    { name: 'Modal Window', selector: '.modal' },
+    { name: 'Modal Title', selector: '.modal-title' },
+];
+
+const ElementCustomizerModal = ({ isOpen, onClose, originalCss, onSave }) => {
+    if (!isOpen) return null;
+
+    const [activeSelector, setActiveSelector] = useState(CUSTOMIZABLE_ELEMENTS[0].selector);
+    const [localCss, setLocalCss] = useState(originalCss);
+
+    useEffect(() => {
+        if (isOpen) {
+            setLocalCss(originalCss);
+        }
+    }, [isOpen, originalCss]);
+
+    const handleCssChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+        const newCss = {
+            ...localCss,
+            [activeSelector]: e.target.value,
+        };
+        setLocalCss(newCss);
+        onSave(newCss); // Apply changes live for preview
+    };
+
+    const handleSave = () => {
+        onSave(localCss);
+        onClose();
+    };
+    
+    const handleClose = () => {
+        onSave(originalCss); // Revert changes on cancel
+        onClose();
+    };
+
+    const handleResetElementCss = () => {
+        const { [activeSelector]: _, ...rest } = localCss;
+        setLocalCss(rest);
+        onSave(rest);
+    };
+
+    return (
+        <div className="modal-overlay" style={{ zIndex: 1010 }} onMouseDown={handleClose}>
+            <div className="modal element-customizer-modal" onMouseDown={(e) => e.stopPropagation()}>
+                <button className="modal-close-btn" onClick={handleClose} aria-label="Close modal"><Icon name="close"/></button>
+                <div className="modal-header">
+                    <h3 className="modal-title no-edit">Customize Elements</h3>
+                </div>
+                <div className="element-customizer-body">
+                    <div className="element-customizer-sidebar">
+                        {CUSTOMIZABLE_ELEMENTS.map(el => (
+                            <button 
+                                key={el.selector} 
+                                onClick={() => setActiveSelector(el.selector)} 
+                                className={activeSelector === el.selector ? 'active' : ''}
+                            >
+                                {el.name}
+                            </button>
+                        ))}
+                    </div>
+                    <div className="element-customizer-content">
+                        <p className="modal-subtitle" style={{marginBottom: '8px'}}>Custom CSS for <code>{activeSelector}</code>. Changes are applied live.</p>
+                        <textarea
+                            value={localCss[activeSelector] || ''}
+                            onChange={handleCssChange}
+                            spellCheck="false"
+                            aria-label={`Custom CSS for ${activeSelector}`}
+                        />
+                         <div style={{ marginTop: '8px' }}>
+                            <button className="sidebar-btn delete" style={{ width: 'auto', margin: 0 }} onClick={handleResetElementCss}>
+                                Reset for this element
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div className="element-customizer-footer">
+                    <button className="sidebar-btn" onClick={handleClose} style={{margin: 0}}>Cancel</button>
+                    <button className="action-button" onClick={handleSave}>Save and Close</button>
                 </div>
             </div>
         </div>
@@ -2213,7 +2406,7 @@ const App = () => {
                             ]
                         }],
                         attachments: [{id: generateId(), url: 'https://www.figma.com', name: 'Link: figma.com', timestamp: createTimestamp(), type: 'link'}],
-                        cover: { imageUrl: `https://picsum.photos/seed/${cardId1}/600/400`, size: 'full' },
+                        cover: { imageUrl: `https://picsum.photos/seed/${cardId1}/600/400` },
                         subscribers: ['member-1'],
                         customFields: { 'field-2': 'High'},
                         linkedCards: []
@@ -2240,7 +2433,7 @@ const App = () => {
                             ]}
                         ],
                         attachments: [],
-                        cover: { color: '#61BD4F', size: 'normal' }, // Green
+                        cover: { color: '#61BD4F' }, // Green
                         subscribers: ['member-3'], // Charlie is watching
                         customFields: { 'field-1': 8 },
                         linkedCards: [cardId3],
@@ -2257,7 +2450,7 @@ const App = () => {
                         location: "",
                         checklists: [],
                         attachments: [],
-                        cover: { size: 'normal' },
+                        cover: { },
                         subscribers: [],
                         customFields: {},
                         linkedCards: [],
@@ -2278,7 +2471,7 @@ const App = () => {
                         location: "",
                         checklists: [],
                         attachments: [],
-                        cover: { size: 'normal' },
+                        cover: { },
                         subscribers: [],
                         customFields: {},
                         linkedCards: [],
@@ -2306,6 +2499,7 @@ const App = () => {
   const [isAutomationModalOpen, setAutomationModalOpen] = useState(false);
   const [isCustomFieldsModalOpen, setCustomFieldsModalOpen] = useState(false);
   const [isSettingsModalOpen, setSettingsModalOpen] = useState(false);
+  const [isElementCustomizerOpen, setElementCustomizerOpen] = useState(false);
 
   const [automations, setAutomations] = useState<Automations>({
       rules: [
@@ -2372,7 +2566,8 @@ const App = () => {
         const isTyping = activeElement?.tagName === 'INPUT' || activeElement?.tagName === 'TEXTAREA';
 
         if (e.key === 'Escape') {
-            if (selectedCard) handleCloseModal();
+            if (isElementCustomizerOpen) setElementCustomizerOpen(false);
+            else if (selectedCard) handleCloseModal();
             else if (isFilterPopoverOpen) setFilterPopoverOpen(false);
             else if (isNotificationsOpen) setNotificationsOpen(false);
             else if (isShareModalOpen) setShareModalOpen(false);
@@ -2391,7 +2586,7 @@ const App = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-}, [selectedCard, isFilterPopoverOpen, isNotificationsOpen, isShareModalOpen, isAutomationModalOpen, isCustomFieldsModalOpen, isSettingsModalOpen]);
+}, [selectedCard, isFilterPopoverOpen, isNotificationsOpen, isShareModalOpen, isAutomationModalOpen, isCustomFieldsModalOpen, isSettingsModalOpen, isElementCustomizerOpen]);
 
 useEffect(() => {
     const interval = setInterval(() => {
@@ -2422,7 +2617,7 @@ useEffect(() => {
       id: generateId(), text, description: '', comments: [],
       activity: [createActivity('created this card.')], labels: [], members: [],
       dueDate: { timestamp: null, completed: false }, startDate: null, location: '',
-      checklists: [], attachments: [], cover: { size: 'normal' }, subscribers: [],
+      checklists: [], attachments: [], cover: {}, subscribers: [],
       cardShortId: newCount, customFields: {}, linkedCards: [],
     };
     const newBoardData = [...boardData];
@@ -2650,6 +2845,7 @@ useEffect(() => {
     localStorage.removeItem('mosaic-board-data');
     localStorage.removeItem('mosaic-custom-fields');
     localStorage.removeItem('mosaic.theme');
+    localStorage.removeItem('mosaic.customCss');
     window.location.reload();
   };
   
@@ -2828,7 +3024,14 @@ useEffect(() => {
         isOpen={isSettingsModalOpen}
         onClose={() => setSettingsModalOpen(false)}
         onClearData={handleClearData}
+        onOpenElementCustomizer={() => setElementCustomizerOpen(true)}
         {...themeManager}
+      />
+       <ElementCustomizerModal
+        isOpen={isElementCustomizerOpen}
+        onClose={() => setElementCustomizerOpen(false)}
+        originalCss={themeManager.customCss}
+        onSave={themeManager.updateCustomCss}
       />
     </>
   );
