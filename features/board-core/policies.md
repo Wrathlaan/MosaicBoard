@@ -1,0 +1,5 @@
+- **State Management**: The entire board structure (lists and their cards) must be treated as a single state object.
+- **Persistence**: Any change to the board (add, delete, move, rename) must be immediately persisted to local storage.
+- **Drag and Drop**: D&D actions must correctly identify the source and destination indices for cards, both within and between lists, to ensure accurate reordering.
+- **Unique IDs**: All new lists and cards must be generated with a unique ID.
+- **Data Integrity**: Deleting a list must also remove all cards contained within it from the state.

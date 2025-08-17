@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Board Core Feature Schema",
+  "description": "Defines the data structures and actions for managing lists and cards on the board.",
+  "definitions": {
+    "Card": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "text": { "type": "string" },
+        "labels": { "type": "array", "items": { "type": "string" } },
+        "members": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["id", "text"]
+    },
+    "List": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "cards": { "type": "array", "items": { "$ref": "#/definitions/Card" } }
+      },
+      "required": ["id", "title", "cards"]
+    }
+  },
+  "actions": {
+    "addList": { "params": [{ "name": "title", "type": "string" }] },
+    "deleteList": { "params": [{ "name": "listId", "type": "string" }] },
+    "updateListTitle": { "params": [{ "name": "listId", "type": "string" }, { "name": "newTitle", "type": "string" }] },
+    "addCard": { "params": [{ "name": "listId", "type": "string" }, { "name": "text", "type": "string" }] },
+    "moveCard": { "params": [
+      { "name": "sourceListId", "type": "string" },
+      { "name": "sourceIndex", "type": "integer" },
+      { "name": "destListId", "type": "string" },
+      { "name": "destIndex", "type": "integer" }
+    ]}
+  }
+}

@@ -1,0 +1,5 @@
+- **Modal Context**: All actions apply to the currently open card in the modal view.
+- **Data Updates**: Changes to card attributes should be saved efficiently, either on field blur or via an explicit 'Save' button.
+- **Activity Log**: Significant actions (adding members, changing dates, adding comments) should generate an entry in the card's activity feed.
+- **User Feedback**: The UI must provide clear feedback for actions, e.g., showing a checkmark next to an assigned member.
+- **Attachment Handling**: File uploads must be handled asynchronously and converted to data URLs for storage.

@@ -1,0 +1,10 @@
+[
+  { "intent": ["change color", "dark mode", "theme", "font size", "background"], "feature": "appearance" },
+  { "intent": ["look", "feel", "appearance", "customize", "style"], "feature": "appearance" },
+  { "intent": ["create list", "new column", "add list"], "feature": "board-core" },
+  { "intent": ["move card", "reorder", "drag"], "feature": "board-core" },
+  { "intent": ["add card", "new task"], "feature": "board-core" },
+  { "intent": ["delete list"], "feature": "board-core" },
+  { "intent": ["add comment", "assign member", "add label", "due date"], "feature": "card-details" },
+  { "intent": ["description", "checklist", "attachment", "edit card"], "feature": "card-details" }
+]

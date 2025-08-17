@@ -1,6 +1,136 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
 
+// --- THEME ---
+interface Theme {
+    mode: 'system' | 'light' | 'dark';
+    accent: string;
+    radius: number;
+    density: 'compact' | 'comfortable' | 'cozy';
+    fontScale: number;
+    reducedMotion: boolean;
+    boardBackground: 'none' | 'dots' | 'grid' | 'noise' | 'nebula';
+    boardWidth: 'normal' | 'wide';
+}
+
+const DEFAULT_THEME: Theme = {
+    mode: 'system',
+    accent: '#0079BF', // Calm Blue
+    radius: 10,
+    density: 'comfortable',
+    fontScale: 1.00,
+    reducedMotion: false,
+    boardBackground: 'none',
+    boardWidth: 'wide',
+};
+
+const useTheme = () => {
+    const [theme, setTheme] = useState<Theme>(() => {
+        try {
+            const savedTheme = localStorage.getItem('mosaic.theme');
+            if (savedTheme) {
+                const parsed = JSON.parse(savedTheme);
+                // Ensure all keys from default theme are present
+                return { ...DEFAULT_THEME, ...parsed };
+            }
+        } catch (e) {
+            console.error("Failed to parse theme from localStorage", e);
+        }
+        return DEFAULT_THEME;
+    });
+
+    const updateTheme = useCallback((updates: Partial<Theme>) => {
+        setTheme(prev => ({ ...prev, ...updates }));
+    }, []);
+
+    const resetTheme = useCallback(() => {
+        setTheme(DEFAULT_THEME);
+    }, []);
+
+    const exportTheme = useCallback(() => {
+        const jsonString = JSON.stringify(theme, null, 2);
+        const blob = new Blob([jsonString], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'mosaic-board-theme.mbtheme';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }, [theme]);
+
+    const importTheme = useCallback((file: File) => {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            try {
+                const imported = JSON.parse(event.target.result as string);
+                const validKeys = Object.keys(DEFAULT_THEME);
+                const validatedTheme: Partial<Theme> = {};
+
+                for (const key of validKeys) {
+                    if (key in imported) {
+                        validatedTheme[key] = imported[key];
+                    }
+                }
+                // Basic validation
+                if (validatedTheme.radius) validatedTheme.radius = Math.max(0, Math.min(16, Number(validatedTheme.radius)));
+                if (validatedTheme.fontScale) validatedTheme.fontScale = Math.max(0.9, Math.min(1.1, Number(validatedTheme.fontScale)));
+
+                updateTheme(validatedTheme);
+            } catch (e) {
+                alert('Invalid theme file.');
+                console.error("Failed to import theme", e);
+            }
+        };
+        reader.readAsText(file);
+    }, [updateTheme]);
+
+    useEffect(() => {
+        localStorage.setItem('mosaic.theme', JSON.stringify(theme));
+
+        const docEl = document.documentElement;
+        const effectiveMode = theme.mode === 'system'
+            ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+            : theme.mode;
+
+        docEl.setAttribute('data-theme', effectiveMode);
+        docEl.setAttribute('data-density', theme.density);
+        docEl.setAttribute('data-board-bg', theme.boardBackground);
+        docEl.setAttribute('data-reduced-motion', String(theme.reducedMotion));
+        docEl.setAttribute('data-board-width', theme.boardWidth);
+        
+        docEl.style.setProperty('--accent', theme.accent);
+        docEl.style.setProperty('--radius', `${theme.radius}px`);
+        docEl.style.fontSize = `${16.5 * theme.fontScale}px`;
+        
+        const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+        if (theme.reducedMotion && !reducedMotionQuery.matches) {
+            docEl.setAttribute('data-reduced-motion', 'true');
+        } else if (reducedMotionQuery.matches) {
+            docEl.setAttribute('data-reduced-motion', 'true');
+        } else {
+             docEl.setAttribute('data-reduced-motion', 'false');
+        }
+
+    }, [theme]);
+
+    useEffect(() => {
+        const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+        const handleChange = () => {
+            if (theme.mode === 'system') {
+                document.documentElement.setAttribute('data-theme', mediaQuery.matches ? 'dark' : 'light');
+            }
+        };
+
+        mediaQuery.addEventListener('change', handleChange);
+        return () => mediaQuery.removeEventListener('change', handleChange);
+    }, [theme.mode]);
+
+    return { theme, updateTheme, resetTheme, exportTheme, importTheme };
+};
+
+
 // --- Data Types ---
 interface LabelData {
   id: string;
@@ -39,6 +169,7 @@ interface AttachmentData {
 interface CoverData {
     color?: string;
     imageUrl?: string;
+    size?: 'normal' | 'full';
 }
 
 interface CommentData {
@@ -352,44 +483,53 @@ const Card = ({ card, isHidden, onDragStart, onDragEnd, onClick, availableLabels
       return acc;
   }, { total: 0, completed: 0 });
   const dueDateStatus = getDueDateStatus(dueDate);
+  
+  const isFullCover = cover.imageUrl && cover.size === 'full';
+  const cardStyle = isFullCover ? { backgroundImage: `url(${cover.imageUrl})` } : {};
 
   return (
     <div
-      className={`card ${isHidden ? 'is-hidden' : ''}`}
+      className={`card ${isHidden ? 'is-hidden' : ''} ${isFullCover ? 'has-full-cover' : ''}`}
+      style={cardStyle}
       draggable="true"
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onClick={onClick}
     >
-      {cover.imageUrl && <img src={cover.imageUrl} alt="Card cover" className="card-cover-img" />}
-      {cover.color && !cover.imageUrl && <div className="card-cover-color" style={{ backgroundColor: cover.color }} />}
-      <div className="card-labels">
-        {labels.map(labelId => {
-            const label = availableLabels.find(l => l.id === labelId);
-            return label ? <span key={label.id} className="card-label" style={{ backgroundColor: label.color }} title={label.text} /> : null;
-        })}
-      </div>
-      <p className="card-text">{text}</p>
-      <div className="card-footer">
-        <div className="card-badges">
-          {dueDate.timestamp && (
-            <span className={`card-badge due-date-badge ${dueDateStatus}`}>
-              {new Date(dueDate.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-            </span>
-          )}
-          {checklistStats.total > 0 && (
-            <span className={`card-badge checklist-badge ${checklistStats.completed === checklistStats.total ? 'complete' : ''}`}>
-              &#9745; {checklistStats.completed}/{checklistStats.total}
-            </span>
-          )}
-          {attachments.length > 0 && <span className="card-badge">&#128206; {attachments.length}</span>}
-          {comments.length > 0 && <span className="card-badge">&#128172; {comments.length}</span>}
-        </div>
-        <div className="card-members">
-          {members.map(memberId => {
-            const member = availableMembers.find(m => m.id === memberId);
-            return member ? <img key={member.id} src={member.avatarUrl} alt={member.name} title={member.name} className="member-avatar" /> : null;
-          })}
+      {!isFullCover && cover.imageUrl && <img src={cover.imageUrl} alt="Card cover" className="card-cover-img" />}
+      {!isFullCover && cover.color && !cover.imageUrl && <div className="card-cover-color" style={{ backgroundColor: cover.color }} />}
+      
+      <div className="card-content-wrapper">
+        {labels.length > 0 && (
+          <div className="card-labels">
+            {labels.map(labelId => {
+                const label = availableLabels.find(l => l.id === labelId);
+                return label ? <span key={label.id} className="card-label" style={{ backgroundColor: label.color }} title={label.text} /> : null;
+            })}
+          </div>
+        )}
+        <p className="card-text">{text}</p>
+        <div className="card-footer">
+          <div className="card-badges">
+            {dueDate.timestamp && (
+              <span className={`card-badge due-date-badge ${dueDateStatus}`}>
+                {new Date(dueDate.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              </span>
+            )}
+            {checklistStats.total > 0 && (
+              <span className={`card-badge checklist-badge ${checklistStats.completed === checklistStats.total ? 'complete' : ''}`}>
+                &#9745; {checklistStats.completed}/{checklistStats.total}
+              </span>
+            )}
+            {attachments.length > 0 && <span className="card-badge">&#128206; {attachments.length}</span>}
+            {comments.length > 0 && <span className="card-badge">&#128172; {comments.length}</span>}
+          </div>
+          <div className="card-members">
+            {members.map(memberId => {
+              const member = availableMembers.find(m => m.id === memberId);
+              return member ? <img key={member.id} src={member.avatarUrl} alt={member.name} title={member.name} className="member-avatar" /> : null;
+            })}
+          </div>
         </div>
       </div>
     </div>
@@ -424,7 +564,6 @@ const AddItemForm = ({ placeholder, buttonText, onSubmit, onCancel }) => {
         className="add-input"
         value={text}
         onChange={(e) => setText(e.target.value)}
-        onBlur={onCancel}
         placeholder={placeholder}
       />
       <div className="form-controls">
@@ -689,7 +828,6 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
 
     const handleSetCover = (cover: CoverData) => {
         updateCard({ cover });
-        setActivePopover(null);
     }
 
     const handleCoverImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -700,11 +838,10 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
         reader.onload = (event) => {
             const imageUrl = event.target?.result as string;
             if (imageUrl) {
-                handleSetCover({ imageUrl });
+                handleSetCover({ ...card.cover, imageUrl, color: undefined });
             }
         };
         reader.readAsDataURL(file);
-        setActivePopover(null); // Close popover after file is selected
     };
     
     const handleToggleSubscription = () => {
@@ -1039,10 +1176,26 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
                             {activePopover === 'cover' && (
                                 <Popover onClose={() => setActivePopover(null)} trigger={null}>
                                     <h4>Cover</h4>
+                                     {card.cover.imageUrl && (
+                                        <>
+                                            <p>Size</p>
+                                            <div className="segmented-control cover-size-control">
+                                                <label>
+                                                    <input type="radio" name="cover-size" checked={!card.cover.size || card.cover.size === 'normal'} onChange={() => updateCard({ cover: { ...card.cover, size: 'normal' }})} />
+                                                    <span>Normal</span>
+                                                </label>
+                                                <label>
+                                                    <input type="radio" name="cover-size" checked={card.cover.size === 'full'} onChange={() => updateCard({ cover: { ...card.cover, size: 'full' }})} />
+                                                    <span>Full</span>
+                                                </label>
+                                            </div>
+                                            <hr/>
+                                        </>
+                                    )}
                                     <p>Colors</p>
                                     <div className="color-palette">
                                       {['#61BD4F', '#F2D600', '#FF9F1A', '#EB5A46', '#0079BF'].map(color => (
-                                        <div key={color} className="color-swatch" style={{backgroundColor: color}} onClick={() => handleSetCover({color})} />
+                                        <div key={color} className="color-swatch" style={{backgroundColor: color}} onClick={() => handleSetCover({ ...card.cover, color, imageUrl: undefined })} />
                                       ))}
                                       <div className="color-swatch" style={{background: 'transparent', border: '1px solid #ccc'}} onClick={() => handleSetCover({})} title="Remove cover" />
                                     </div>
@@ -1050,7 +1203,7 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
                                     <button className="action-button full-width" onClick={() => coverFileInputRef.current?.click()}>Upload a cover image</button>
                                     <input type="file" ref={coverFileInputRef} onChange={handleCoverImageUpload} style={{display: 'none'}} accept="image/*"/>
                                     <hr/>
-                                    <AddItemForm placeholder="Paste image URL..." buttonText="Set" onSubmit={(url) => handleSetCover({imageUrl: url})} onCancel={() => setActivePopover(null)} />
+                                    <AddItemForm placeholder="Paste image URL..." buttonText="Set" onSubmit={(url) => handleSetCover({ ...card.cover, imageUrl: url, color: undefined })} onCancel={() => {}} />
                                 </Popover>
                             )}
                         </div>
@@ -1395,7 +1548,7 @@ const DashboardView = ({ boardData, availableLabels, availableMembers }) => {
                                 className="chart-bar" 
                                 style={{
                                     width: `${maxCount > 0 ? (item.count / maxCount) * 100 : 0}%`,
-                                    backgroundColor: item[colorProp] || '#0079BF'
+                                    backgroundColor: item[colorProp] || 'var(--accent)'
                                 }}
                             />
                         </div>
@@ -1666,17 +1819,233 @@ const CustomFieldsModal = ({ isOpen, onClose, definitions, onUpdate }) => {
     );
 };
 
+const AppearanceSettings = ({ theme, updateTheme, resetTheme, exportTheme, importTheme }) => {
+    const importInputRef = useRef<HTMLInputElement>(null);
+    const ACCENT_PRESETS = ['#0079BF', '#d6262e', '#ff9f1a', '#61bd4f', '#a064bf', '#f2d600'];
+    const BOARD_BACKGROUNDS: Theme['boardBackground'][] = ['none', 'dots', 'grid', 'noise', 'nebula'];
+    
+    const handleImportClick = () => {
+        importInputRef.current?.click();
+    };
+
+    const handleFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            importTheme(file);
+        }
+    };
+    
+    return (
+        <div className="appearance-settings">
+            <div className="appearance-controls">
+                <div className="setting-item">
+                    <h5>Mode</h5>
+                    <div className="segmented-control">
+                        {(['light', 'dark', 'system'] as const).map(mode => (
+                            <label key={mode}>
+                                <input type="radio" name="theme-mode" value={mode} checked={theme.mode === mode} onChange={() => updateTheme({ mode })} />
+                                <span>{mode.charAt(0).toUpperCase() + mode.slice(1)}</span>
+                            </label>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="setting-item">
+                    <h5>Accent Color</h5>
+                    <div className="accent-picker">
+                        {ACCENT_PRESETS.map(color => (
+                            <button
+                                key={color}
+                                className={`accent-swatch ${theme.accent.toLowerCase() === color.toLowerCase() ? 'active' : ''}`}
+                                style={{ backgroundColor: color }}
+                                onClick={() => updateTheme({ accent: color })}
+                                aria-label={`Set accent color to ${color}`}
+                            />
+                        ))}
+                        <input type="color" value={theme.accent} onChange={e => updateTheme({ accent: e.target.value })} className="accent-swatch custom" />
+                    </div>
+                </div>
+                
+                <div className="setting-item">
+                    <h5>Corner Radius</h5>
+                    <div className="slider-control">
+                        <input type="range" min="0" max="16" value={theme.radius} onChange={e => updateTheme({ radius: parseInt(e.target.value, 10) })} />
+                        <span>{theme.radius}px</span>
+                    </div>
+                </div>
+                
+                <div className="setting-item">
+                    <h5>Font Size</h5>
+                    <div className="slider-control">
+                        <input type="range" min="0.9" max="1.1" step="0.01" value={theme.fontScale} onChange={e => updateTheme({ fontScale: parseFloat(e.target.value) })} />
+                        <span>{Math.round(theme.fontScale * 100)}%</span>
+                    </div>
+                </div>
+                
+                <div className="setting-item">
+                    <h5>Density</h5>
+                    <div className="segmented-control">
+                        {(['compact', 'comfortable', 'cozy'] as const).map(density => (
+                            <label key={density}>
+                                <input type="radio" name="theme-density" value={density} checked={theme.density === density} onChange={() => updateTheme({ density })} />
+                                <span>{density.charAt(0).toUpperCase() + density.slice(1)}</span>
+                            </label>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="setting-item">
+                    <h5>Board Width</h5>
+                    <div className="segmented-control">
+                        {(['normal', 'wide'] as const).map(width => (
+                            <label key={width}>
+                                <input type="radio" name="theme-width" value={width} checked={theme.boardWidth === width} onChange={() => updateTheme({ boardWidth: width })} />
+                                <span>{width.charAt(0).toUpperCase() + width.slice(1)}</span>
+                            </label>
+                        ))}
+                    </div>
+                </div>
+                
+                <div className="setting-item">
+                    <h5>Board Background</h5>
+                    <div className="background-picker">
+                        {BOARD_BACKGROUNDS.map(bg => (
+                            <button
+                                key={bg}
+                                className={`background-tile bg-tile-${bg} ${theme.boardBackground === bg ? 'active' : ''}`}
+                                onClick={() => updateTheme({ boardBackground: bg })}
+                                aria-label={`Set board background to ${bg}`}
+                            >
+                                <span>{bg.charAt(0).toUpperCase() + bg.slice(1)}</span>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="setting-item">
+                     <label className="toggle-control">
+                        <input type="checkbox" checked={theme.reducedMotion} onChange={e => updateTheme({ reducedMotion: e.target.checked })} />
+                        <span>Reduce Motion</span>
+                    </label>
+                </div>
+                
+                <div className="setting-item">
+                    <h5>Theme Actions</h5>
+                    <div className="theme-actions">
+                        <button className="sidebar-btn" onClick={exportTheme}>Export</button>
+                        <button className="sidebar-btn" onClick={handleImportClick}>Import</button>
+                        <input type="file" ref={importInputRef} onChange={handleFileImport} accept=".mbtheme" style={{ display: 'none' }} />
+                        <button className="sidebar-btn delete" onClick={resetTheme}>Reset to Defaults</button>
+                    </div>
+                </div>
+                
+            </div>
+            <div className="appearance-preview">
+                <h5>Live Preview</h5>
+                <div className="theme-preview-board">
+                    <div className="theme-preview-list">
+                        <div className="theme-preview-list-title">In Progress</div>
+                        <div className="theme-preview-card">
+                            <div className="theme-preview-card-labels">
+                                <span style={{backgroundColor: '#61BD4F'}}></span>
+                                <span style={{backgroundColor: '#F2D600'}}></span>
+                            </div>
+                            <p>Design the new settings modal</p>
+                        </div>
+                        <div className="theme-preview-card">
+                            <p>Implement theme persistence</p>
+                        </div>
+                        <button className="theme-preview-button">+ Add a card</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const SettingsModal = ({ isOpen, onClose, onClearData, theme, updateTheme, resetTheme, exportTheme, importTheme }) => {
+    if (!isOpen) return null;
+    const [activeTab, setActiveTab] = useState('appearance');
+
+    const licenses = [
+        { name: 'React & React DOM', license: 'MIT License', url: 'https://github.com/facebook/react/blob/main/LICENSE' },
+        { name: 'Geist Sans & Mono Fonts', license: 'SIL Open Font License 1.1', url: 'https://github.com/vercel/geist-font/blob/main/LICENSE' },
+    ];
+
+    const handleClearData = () => {
+        if (window.confirm('Are you sure you want to delete all board data? This action cannot be undone.')) {
+            onClearData();
+        }
+    };
+
+    return (
+        <div className="modal-overlay" onMouseDown={onClose}>
+            <div className="modal settings-modal" onMouseDown={(e) => e.stopPropagation()}>
+                <button className="modal-close-btn" onClick={onClose} aria-label="Close modal">×</button>
+                <div className="modal-header">
+                    <h3 className="modal-title no-edit">Settings</h3>
+                </div>
+                <div className="settings-body">
+                    <div className="settings-sidebar">
+                         <button onClick={() => setActiveTab('appearance')} className={activeTab === 'appearance' ? 'active' : ''}>Appearance</button>
+                         <button onClick={() => setActiveTab('general')} className={activeTab === 'general' ? 'active' : ''}>General</button>
+                         <button onClick={() => setActiveTab('licenses')} className={activeTab === 'licenses' ? 'active' : ''}>Licenses</button>
+                    </div>
+                    <div className="settings-content">
+                        {activeTab === 'licenses' && (
+                            <div>
+                                <h4>Third-Party Licenses</h4>
+                                <p>MosaicBoard is built using fantastic open-source software. We are grateful to the developers of these projects.</p>
+                                <ul className="license-list">
+                                    {licenses.map(lib => (
+                                        <li key={lib.name} className="license-item">
+                                            <strong>{lib.name}</strong>
+                                            <span> - </span>
+                                            <a href={lib.url} target="_blank" rel="noopener noreferrer">{lib.license}</a>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+                        {activeTab === 'general' && (
+                            <div>
+                                <h4>General Settings</h4>
+                                <div className="setting-item">
+                                    <h5>Board Data</h5>
+                                    <p>This will permanently delete all lists, cards, and settings from your browser's local storage.</p>
+                                    <button className="sidebar-btn delete" onClick={handleClearData}>Clear All Board Data</button>
+                                </div>
+                            </div>
+                        )}
+                         {activeTab === 'appearance' && (
+                            <AppearanceSettings 
+                                theme={theme}
+                                updateTheme={updateTheme}
+                                resetTheme={resetTheme}
+                                exportTheme={exportTheme}
+                                importTheme={importTheme}
+                            />
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 
 /**
  * Main App Component
  */
 const App = () => {
+  const themeManager = useTheme();
+
   const [availableLabels] = useState<LabelData[]>(AVAILABLE_LABELS_DATA);
   const [availableMembers, setAvailableMembers] = useState<MemberData[]>(AVAILABLE_MEMBERS_DATA);
   
   const [boardData, setBoardData] = useState<ListData[]>(() => {
     try {
-        const savedData = localStorage.getItem('trello-board-data');
+        const savedData = localStorage.getItem('mosaic-board-data');
         if (savedData) {
             const parsed = JSON.parse(savedData);
             let counter = 0;
@@ -1697,7 +2066,7 @@ const App = () => {
                             items: (cl.items || []).map(item => ({...item, attachments: item.attachments || []}))
                         })),
                         attachments: card.attachments || [],
-                        cover: card.cover || {},
+                        cover: card.cover || { size: 'normal' },
                         subscribers: card.subscribers || [],
                         comments: (card.comments || []).map(c => ({...c, attachments: c.attachments || []})),
                         customFields: card.customFields || {},
@@ -1706,10 +2075,107 @@ const App = () => {
                 })
             }));
         }
+        
+        const cardId1 = generateId();
+        const cardId2 = generateId();
+        const cardId3 = generateId();
+        const cardId4 = generateId();
+        const MOCKUP_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23e0e0e0'/%3E%3Ctext x='50' y='55' font-size='12' text-anchor='middle' fill='%23999'%3EMockup%3C/text%3E%3C/svg%3E";
+
          const initialData = [
-            { id: 'list-1', title: 'To Do', cards: [{id: generateId(), cardShortId: 1, text: 'Create a Trello Clone', description: 'Implement all the cool features!', comments: [{id: generateId(), authorId: 'member-2', text: 'Good luck!', timestamp: createTimestamp(), attachments: []}], activity: [createActivity('created this card.')], labels: ['label-1', 'label-4'], members: ['member-1'], dueDate: { timestamp: Date.now() + 3 * 24 * 60 * 60 * 1000, completed: false }, startDate: Date.now() - 1 * 24 * 60 * 60 * 1000, location: "San Francisco, CA", checklists: [{id: generateId(), title: 'Core Features', items: [{id: generateId(), text: 'Setup board', completed: true, attachments: []}, {id: generateId(), text: 'Add cards', completed: false, attachments: []}]}], attachments: [], cover: { color: '#0079BF' }, subscribers: ['member-1'], customFields: { 'field-1': 5, 'field-2': 'High'}, linkedCards: [] }] },
-            { id: 'list-2', title: 'In Progress', cards: [{id: generateId(), cardShortId: 2, text: 'Add multiple views', description: '', comments: [], activity: [createActivity('created this card.')], labels: ['label-1'], members: ['member-1', 'member-2'], dueDate: { timestamp: Date.now() + 7 * 24 * 60 * 60 * 1000, completed: false }, startDate: Date.now(), location: "Remote", checklists: [], attachments: [], cover: {}, subscribers: [], customFields: { 'field-1': 8 }, linkedCards: [] }] },
-            { id: 'list-3', title: 'Done', cards: [] },
+            {
+                id: 'list-1', title: 'Website Redesign', cards: [
+                    {
+                        id: cardId1, cardShortId: 1, text: 'Design new marketing website',
+                        description: 'Includes wireframes, mockups, and prototypes for the new homepage and feature pages. Focus on a clean, modern aesthetic with clear calls to action.',
+                        comments: [{id: generateId(), authorId: 'member-2', text: 'Great start, @Charlie! What do you think of the color palette?', timestamp: createTimestamp(), attachments: []}],
+                        activity: [createActivity('created this card.')],
+                        labels: ['label-3', 'label-5'], // Design, Research
+                        members: ['member-1'], // Alice
+                        dueDate: { timestamp: Date.now() + 5 * 24 * 60 * 60 * 1000, completed: false },
+                        startDate: Date.now() - 2 * 24 * 60 * 60 * 1000,
+                        location: "Design Studio",
+                        checklists: [{
+                            id: generateId(), title: 'Design Phases', items: [
+                                {id: generateId(), text: 'Research competitors', completed: true, attachments: []},
+                                {id: generateId(), text: 'Create wireframes', completed: true, attachments: []},
+                                {id: generateId(), text: 'Develop mockups', completed: false, attachments: [{ id: generateId(), url: MOCKUP_SVG, name: 'mockup-preview.svg', type: 'file', timestamp: createTimestamp(), previewUrl: MOCKUP_SVG }]},
+                                {id: generateId(), text: 'Finalize color palette', completed: false, attachments: []}
+                            ]
+                        }],
+                        attachments: [{id: generateId(), url: 'https://www.figma.com', name: 'Link: figma.com', timestamp: createTimestamp(), type: 'link'}],
+                        cover: { imageUrl: `https://picsum.photos/seed/${cardId1}/600/400`, size: 'full' },
+                        subscribers: ['member-1'],
+                        customFields: { 'field-2': 'High'},
+                        linkedCards: []
+                    }
+                ]
+            },
+            {
+                id: 'list-2', title: 'Q2 Features', cards: [
+                    {
+                        id: cardId2, cardShortId: 2, text: 'Develop custom fields feature',
+                        description: 'Allow users to add custom fields like "Story Points" (number) or "Priority" (dropdown) to cards.',
+                        comments: [],
+                        activity: [createActivity('created this card.'), createActivity('linked card #3 to this card.')],
+                        labels: ['label-1', 'label-4'], // Feature, Docs
+                        members: ['member-1', 'member-2'], // Alice, Bob
+                        dueDate: { timestamp: Date.now() + 14 * 24 * 60 * 60 * 1000, completed: false },
+                        startDate: Date.now(),
+                        location: "",
+                        checklists: [
+                            { id: generateId(), title: 'Development Tasks', items: [
+                                { id: generateId(), text: 'API endpoints', completed: true, attachments: [] },
+                                { id: generateId(), text: 'Database schema update', completed: true, attachments: [] },
+                                { id: generateId(), text: 'Frontend UI implementation', completed: false, attachments: [] }
+                            ]}
+                        ],
+                        attachments: [],
+                        cover: { color: '#61BD4F', size: 'normal' }, // Green
+                        subscribers: ['member-3'], // Charlie is watching
+                        customFields: { 'field-1': 8 },
+                        linkedCards: [cardId3],
+                    },
+                    {
+                        id: cardId3, cardShortId: 3, text: 'Write documentation for Custom Fields',
+                        description: 'Document the new custom fields feature for the public knowledge base.',
+                        comments: [],
+                        activity: [createActivity('created this card.')],
+                        labels: ['label-4'], // Docs
+                        members: ['member-3'], // Charlie
+                        dueDate: { timestamp: Date.now() + 18 * 24 * 60 * 60 * 1000, completed: false },
+                        startDate: null,
+                        location: "",
+                        checklists: [],
+                        attachments: [],
+                        cover: { size: 'normal' },
+                        subscribers: [],
+                        customFields: {},
+                        linkedCards: [],
+                    }
+                ]
+            },
+            {
+                id: 'list-3', title: 'Done', cards: [
+                     {
+                        id: cardId4, cardShortId: 4, text: 'Refactor authentication module',
+                        description: 'Improve security and performance of the user login and session management.',
+                        comments: [],
+                        activity: [createActivity('completed this card.')],
+                        labels: ['label-2'], // Bug
+                        members: ['member-2'], // Bob
+                        dueDate: { timestamp: Date.now() - 3 * 24 * 60 * 60 * 1000, completed: true },
+                        startDate: Date.now() - 7 * 24 * 60 * 60 * 1000,
+                        location: "",
+                        checklists: [],
+                        attachments: [],
+                        cover: { size: 'normal' },
+                        subscribers: [],
+                        customFields: {},
+                        linkedCards: [],
+                    }
+                ]
+            },
         ];
         return initialData;
     } catch (error) {
@@ -1730,6 +2196,7 @@ const App = () => {
   const [isShareModalOpen, setShareModalOpen] = useState(false);
   const [isAutomationModalOpen, setAutomationModalOpen] = useState(false);
   const [isCustomFieldsModalOpen, setCustomFieldsModalOpen] = useState(false);
+  const [isSettingsModalOpen, setSettingsModalOpen] = useState(false);
 
   const [automations, setAutomations] = useState<Automations>({
       rules: [
@@ -1746,7 +2213,7 @@ const App = () => {
   });
   
   const [customFieldDefinitions, setCustomFieldDefinitions] = useState<CustomFieldDefinition[]>(() => {
-    const saved = localStorage.getItem('trello-custom-fields');
+    const saved = localStorage.getItem('mosaic-custom-fields');
     if (saved) return JSON.parse(saved);
     return [
         { id: 'field-1', name: 'Story Points', type: 'number' },
@@ -1755,14 +2222,14 @@ const App = () => {
   });
   
   const [cardCounter, setCardCounter] = useState(() => {
-    const savedData = localStorage.getItem('trello-board-data');
+    const savedData = localStorage.getItem('mosaic-board-data');
     if (savedData) {
       try {
         const allCards = JSON.parse(savedData).flatMap(l => l.cards);
         return allCards.length > 0 ? Math.max(0, ...allCards.map(c => c.cardShortId || 0)) : 0;
       } catch { return 0; }
     }
-    return 2;
+    return 4;
   });
 
   
@@ -1778,14 +2245,14 @@ const App = () => {
   
   useEffect(() => {
     try {
-        localStorage.setItem('trello-board-data', JSON.stringify(boardData));
+        localStorage.setItem('mosaic-board-data', JSON.stringify(boardData));
     } catch(error) {
         console.error("Failed to save board data to localStorage", error);
     }
   }, [boardData]);
   
   useEffect(() => {
-    localStorage.setItem('trello-custom-fields', JSON.stringify(customFieldDefinitions));
+    localStorage.setItem('mosaic-custom-fields', JSON.stringify(customFieldDefinitions));
   }, [customFieldDefinitions]);
   
   useEffect(() => {
@@ -1800,6 +2267,7 @@ const App = () => {
             else if (isShareModalOpen) setShareModalOpen(false);
             else if (isAutomationModalOpen) setAutomationModalOpen(false);
             else if (isCustomFieldsModalOpen) setCustomFieldsModalOpen(false);
+            else if (isSettingsModalOpen) setSettingsModalOpen(false);
             else if (isTyping) (activeElement as HTMLElement).blur();
         }
         
@@ -1812,7 +2280,7 @@ const App = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-}, [selectedCard, isFilterPopoverOpen, isNotificationsOpen, isShareModalOpen, isAutomationModalOpen, isCustomFieldsModalOpen]);
+}, [selectedCard, isFilterPopoverOpen, isNotificationsOpen, isShareModalOpen, isAutomationModalOpen, isCustomFieldsModalOpen, isSettingsModalOpen]);
 
 useEffect(() => {
     const interval = setInterval(() => {
@@ -1843,7 +2311,7 @@ useEffect(() => {
       id: generateId(), text, description: '', comments: [],
       activity: [createActivity('created this card.')], labels: [], members: [],
       dueDate: { timestamp: null, completed: false }, startDate: null, location: '',
-      checklists: [], attachments: [], cover: {}, subscribers: [],
+      checklists: [], attachments: [], cover: { size: 'normal' }, subscribers: [],
       cardShortId: newCount, customFields: {}, linkedCards: [],
     };
     const newBoardData = [...boardData];
@@ -2066,6 +2534,13 @@ useEffect(() => {
       setAvailableMembers(prev => [...prev, newMember]);
       alert(`${newMember.name} has been invited to the board!`);
   }
+
+  const handleClearData = () => {
+    localStorage.removeItem('mosaic-board-data');
+    localStorage.removeItem('mosaic-custom-fields');
+    localStorage.removeItem('mosaic.theme');
+    window.location.reload();
+  };
   
   const visibilityMap = useMemo(() => {
     const map: { [cardId: string]: boolean } = {};
@@ -2196,6 +2671,7 @@ useEffect(() => {
                 )}
             </div>
              <button className="header-btn share-btn" onClick={() => setShareModalOpen(true)}>Share</button>
+             <button className="header-btn" onClick={() => setSettingsModalOpen(true)} title="Settings">⚙️</button>
         </div>
       </header>
       <main className={`main-container view-${view.toLowerCase()}`}>
@@ -2235,6 +2711,12 @@ useEffect(() => {
         onClose={() => setCustomFieldsModalOpen(false)}
         definitions={customFieldDefinitions}
         onUpdate={setCustomFieldDefinitions}
+      />
+      <SettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={() => setSettingsModalOpen(false)}
+        onClearData={handleClearData}
+        {...themeManager}
       />
     </>
   );
