@@ -159,11 +159,11 @@ interface ChecklistData {
 
 interface AttachmentData {
   id: string;
-  url: string; // Will be data URL for file uploads
+  url?: string; // Will be data URL for file uploads, optional for storage
   name: string;
   timestamp: number;
   type: 'link' | 'file';
-  previewUrl?: string; // For image previews
+  previewUrl?: string; // For image previews, optional for storage
 }
 
 interface CoverData {
@@ -332,6 +332,55 @@ const fileToAttachment = (file: File): Promise<AttachmentData> => {
     });
 };
 
+/**
+ * Sanitizes board data to remove large base64 strings before saving to localStorage.
+ */
+const getSanitizedBoardDataForStorage = (data: ListData[]): ListData[] => {
+    const sanitizeAttachments = (attachments: AttachmentData[] = []): AttachmentData[] => {
+        return attachments.map(att => {
+            if (att.type === 'file') {
+                // Return a new object without the large data fields
+                return {
+                    id: att.id,
+                    name: att.name,
+                    timestamp: att.timestamp,
+                    type: att.type,
+                };
+            }
+            return att;
+        });
+    };
+
+    return data.map(list => ({
+        ...list,
+        cards: list.cards.map(card => {
+            const sanitizedCard = {
+                ...card,
+                attachments: sanitizeAttachments(card.attachments),
+                comments: (card.comments || []).map(comment => ({
+                    ...comment,
+                    attachments: sanitizeAttachments(comment.attachments),
+                })),
+                checklists: (card.checklists || []).map(checklist => ({
+                    ...checklist,
+                    items: (checklist.items || []).map(item => ({
+                        ...item,
+                        attachments: sanitizeAttachments(item.attachments),
+                    })),
+                })),
+            };
+
+            // Also sanitize the cover image if it's a data URL from a file upload
+            if (sanitizedCard.cover?.imageUrl?.startsWith('data:image')) {
+                sanitizedCard.cover = { ...sanitizedCard.cover, imageUrl: undefined };
+            }
+
+            return sanitizedCard;
+        }),
+    }));
+};
+
+
 // --- Prop Types ---
 interface CardProps {
   card: CardData;
@@ -354,6 +403,41 @@ interface ListProps {
 
 
 // --- Components ---
+
+/**
+ * Icon Component
+ */
+interface IconProps {
+  name: string;
+  style?: 'outlined' | 'rounded' | 'sharp';
+  size?: number;
+  color?: string;
+  title?: string;
+  className?: string;
+}
+
+const Icon: React.FC<IconProps> = ({ name, style = 'outlined', size = 24, color, title, className = '' }) => {
+  const familyClass = style === 'rounded' ? 'rounded' : style === 'sharp' ? 'sharp' : '';
+  const inlineStyles: React.CSSProperties = {
+    fontSize: `${size}px`,
+    fontVariationSettings: `'opsz' ${size}`,
+  };
+  if (color) {
+    inlineStyles.color = color;
+  }
+
+  return (
+    <span
+      className={`icon ${familyClass} ${className}`}
+      style={inlineStyles}
+      role={title ? "img" : undefined}
+      aria-label={title ? title : undefined}
+      aria-hidden={!title}
+    >
+      {name}
+    </span>
+  );
+};
 
 /**
  * Popover Component
@@ -465,7 +549,7 @@ const FilterPopover = ({ filters, onFiltersChange, onClose, availableLabels, ava
                         ))}
                     </div>
                 </div>
-                <button className="sidebar-btn delete" onClick={clearFilters}>Clear All Filters</button>
+                <button className="sidebar-btn delete" onClick={clearFilters}><Icon name="close" size={18}/>Clear All Filters</button>
             </div>
         </Popover>
     );
@@ -513,16 +597,17 @@ const Card = ({ card, isHidden, onDragStart, onDragEnd, onClick, availableLabels
           <div className="card-badges">
             {dueDate.timestamp && (
               <span className={`card-badge due-date-badge ${dueDateStatus}`}>
+                <Icon name="schedule" size={16} />
                 {new Date(dueDate.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
               </span>
             )}
             {checklistStats.total > 0 && (
               <span className={`card-badge checklist-badge ${checklistStats.completed === checklistStats.total ? 'complete' : ''}`}>
-                &#9745; {checklistStats.completed}/{checklistStats.total}
+                <Icon name="check_box" size={16} /> {checklistStats.completed}/{checklistStats.total}
               </span>
             )}
-            {attachments.length > 0 && <span className="card-badge">&#128206; {attachments.length}</span>}
-            {comments.length > 0 && <span className="card-badge">&#128172; {comments.length}</span>}
+            {attachments.length > 0 && <span className="card-badge"><Icon name="attachment" size={16} /> {attachments.length}</span>}
+            {comments.length > 0 && <span className="card-badge"><Icon name="chat_bubble" size={16} /> {comments.length}</span>}
           </div>
           <div className="card-members">
             {members.map(memberId => {
@@ -569,7 +654,7 @@ const AddItemForm = ({ placeholder, buttonText, onSubmit, onCancel }) => {
       <div className="form-controls">
         <button type="submit" className="action-button">{buttonText}</button>
         <button type="button" className="cancel-button" onMouseDown={onCancel} aria-label="Cancel">
-          ×
+          <Icon name="close" size={20} />
         </button>
       </div>
     </form>
@@ -630,16 +715,26 @@ const Checklist = ({ checklist, onUpdate }) => {
                         <div className="checklist-item">
                             <input type="checkbox" checked={item.completed} onChange={() => handleToggleItem(item.id)} />
                             <span className={item.completed ? 'completed' : ''}>{item.text}</span>
-                            <button className="attach-to-item-btn" onClick={() => handleAttachClick(item.id)} aria-label="Attach file">📎</button>
+                            <button className="attach-to-item-btn" onClick={() => handleAttachClick(item.id)} aria-label="Attach file"><Icon name="attachment" size={16} /></button>
                         </div>
                         {item.attachments && item.attachments.length > 0 && (
                             <div className="item-attachment-list">
-                                {item.attachments.map(att => (
-                                     <a key={att.id} href={att.url} target="_blank" rel="noopener noreferrer" className="item-attachment">
-                                        {att.previewUrl ? <img src={att.previewUrl} alt={att.name} /> : '📄'}
-                                        <span>{att.name}</span>
-                                     </a>
-                                ))}
+                                {item.attachments.map(att => {
+                                    if (att.type === 'file' && !att.url) {
+                                        return (
+                                            <div key={att.id} className="item-attachment is-unloaded" title="Local file attachments are not saved between sessions.">
+                                                <Icon name="draft" size={16} />
+                                                <span>{att.name}</span>
+                                            </div>
+                                        );
+                                    }
+                                    return (
+                                         <a key={att.id} href={att.url} target="_blank" rel="noopener noreferrer" className="item-attachment">
+                                            {att.previewUrl ? <img src={att.previewUrl} alt={att.name} /> : <Icon name="draft" size={16} />}
+                                            <span>{att.name}</span>
+                                         </a>
+                                    );
+                                })}
                             </div>
                         )}
                     </div>
@@ -709,7 +804,7 @@ const CommentForm = ({ onSubmit, availableMembers }) => {
                     {stagedAttachments.map(att => (
                         <div key={att.id} className="staged-attachment">
                            <span>{att.name}</span>
-                           <button type="button" onClick={() => removeStagedAttachment(att.id)}>×</button>
+                           <button type="button" onClick={() => removeStagedAttachment(att.id)}><Icon name="close" size={16}/></button>
                         </div>
                     ))}
                 </div>
@@ -717,7 +812,7 @@ const CommentForm = ({ onSubmit, availableMembers }) => {
             <div className="comment-controls">
                 <button type="submit" disabled={!text.trim() && stagedAttachments.length === 0}>Save</button>
                 <div className="popover-wrapper">
-                  <button type="button" onClick={() => setShowEmojiPicker(p => !p)}>😀</button>
+                  <button type="button" onClick={() => setShowEmojiPicker(p => !p)}><Icon name="mood" /></button>
                   {showEmojiPicker && (
                     <Popover onClose={() => setShowEmojiPicker(false)} trigger={null}>
                       <div className="emoji-picker">
@@ -726,7 +821,7 @@ const CommentForm = ({ onSubmit, availableMembers }) => {
                     </Popover>
                   )}
                 </div>
-                <button type="button" onClick={() => fileInputRef.current?.click()} aria-label="Attach file">📎</button>
+                <button type="button" onClick={() => fileInputRef.current?.click()} aria-label="Attach file"><Icon name="attachment" /></button>
                 <input type="file" ref={fileInputRef} onChange={handleFileChange} multiple style={{display: 'none'}}/>
             </div>
         </form>
@@ -910,12 +1005,23 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
     
     const AttachmentGroup = ({ attachments }) => (
       <div className="attachment-list comment-attachments">
-        {attachments.map(att => (
-            <a key={att.id} href={att.url} target="_blank" rel="noopener noreferrer" className="attachment-item">
-              {att.previewUrl && <img src={att.previewUrl} className="attachment-preview" alt="Attachment preview"/>}
-              <span>{att.name}</span>
-            </a>
-        ))}
+        {(attachments || []).map(att => {
+            if (att.type === 'file' && !att.url) {
+                return (
+                    <div key={att.id} className="attachment-item is-unloaded" title="Local file attachments are not saved between sessions to conserve storage.">
+                        <Icon name="draft" />
+                        <span>{att.name}</span>
+                    </div>
+                );
+            }
+            return (
+                <a key={att.id} href={att.url} target="_blank" rel="noopener noreferrer" className="attachment-item">
+                  {att.previewUrl && <img src={att.previewUrl} className="attachment-preview" alt="Attachment preview"/>}
+                  {!att.previewUrl && <Icon name={att.type === 'link' ? 'link' : 'draft'} />}
+                  <span>{att.name}</span>
+                </a>
+            );
+        })}
       </div>
     );
     
@@ -945,7 +1051,7 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
     return (
         <div className="modal-overlay" onMouseDown={onClose}>
             <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
-                <button className="modal-close-btn" onClick={onClose} aria-label="Close modal">×</button>
+                <button className="modal-close-btn" onClick={onClose} aria-label="Close modal"><Icon name="close"/></button>
                 <div className="modal-header">
                     <input 
                         className="modal-title" 
@@ -1029,7 +1135,7 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
                                 {linkedCardData.map(linkedCard => (
                                     <div key={linkedCard.id} className="linked-card-item">
                                         <span>#{linkedCard.cardShortId} {linkedCard.text}</span>
-                                        <button onClick={() => handleRemoveLink(linkedCard.id)}>×</button>
+                                        <button onClick={() => handleRemoveLink(linkedCard.id)}><Icon name="close" size={16} /></button>
                                     </div>
                                 ))}
                             </div>
@@ -1068,7 +1174,7 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
                     <div className="modal-sidebar">
                         <h3>Add to card</h3>
                         <div className="popover-wrapper">
-                            <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'members' ? null : 'members')}>Members</button>
+                            <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'members' ? null : 'members')}><Icon name="group" size={20}/><span>Members</span></button>
                             {activePopover === 'members' && (
                                 <Popover onClose={() => setActivePopover(null)} trigger={null}>
                                     <h4>Members</h4>
@@ -1076,28 +1182,28 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
                                         <div key={member.id} className="popover-item" onClick={() => handleToggleMember(member.id)}>
                                             <img src={member.avatarUrl} alt={member.name} className="member-avatar" />
                                             <span>{member.name}</span>
-                                            {card.members.includes(member.id) && ' ✓'}
+                                            {card.members.includes(member.id) && <Icon name="check" />}
                                         </div>
                                     ))}
                                 </Popover>
                             )}
                         </div>
                          <div className="popover-wrapper">
-                            <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'labels' ? null : 'labels')}>Labels</button>
+                            <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'labels' ? null : 'labels')}><Icon name="label" size={20}/><span>Labels</span></button>
                             {activePopover === 'labels' && (
                                 <Popover onClose={() => setActivePopover(null)} trigger={null}>
                                     <h4>Labels</h4>
                                     {availableLabels.map(label => (
                                         <div key={label.id} className="popover-item label-popover-item" onClick={() => handleToggleLabel(label.id)}>
                                             <span className="modal-label" style={{ backgroundColor: label.color }}>{label.text}</span>
-                                            {card.labels.includes(label.id) && ' ✓'}
+                                            {card.labels.includes(label.id) && <Icon name="check" />}
                                         </div>
                                     ))}
                                 </Popover>
                             )}
                         </div>
                         <div className="popover-wrapper">
-                            <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'checklist' ? null : 'checklist')}>Checklist</button>
+                            <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'checklist' ? null : 'checklist')}><Icon name="playlist_add_check" size={20}/><span>Checklist</span></button>
                             {activePopover === 'checklist' && (
                                 <Popover onClose={() => setActivePopover(null)} trigger={null}>
                                     <h4>Add Checklist</h4>
@@ -1106,7 +1212,7 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
                             )}
                         </div>
                         <div className="popover-wrapper">
-                            <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'dates' ? null : 'dates')}>Dates</button>
+                            <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'dates' ? null : 'dates')}><Icon name="calendar_month" size={20}/><span>Dates</span></button>
                             {activePopover === 'dates' && (
                                 <Popover onClose={() => setActivePopover(null)} trigger={null}>
                                     <h4>Change Dates</h4>
@@ -1128,7 +1234,7 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
                             )}
                         </div>
                         <div className="popover-wrapper">
-                            <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'attachment' ? null : 'attachment')}>Attachment</button>
+                            <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'attachment' ? null : 'attachment')}><Icon name="attachment" size={20}/><span>Attachment</span></button>
                             {activePopover === 'attachment' && (
                                 <Popover onClose={() => setActivePopover(null)} trigger={null}>
                                     <h4>Attach</h4>
@@ -1140,7 +1246,7 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
                             )}
                         </div>
                         <div className="popover-wrapper">
-                            <button className="sidebar-btn" onClick={() => setLinkPopoverOpen(p => !p)}>Link Card</button>
+                            <button className="sidebar-btn" onClick={() => setLinkPopoverOpen(p => !p)}><Icon name="link" size={20}/><span>Link Card</span></button>
                             {isLinkPopoverOpen && (
                                 <Popover onClose={() => setLinkPopoverOpen(false)} trigger={null}>
                                     <h4>Link Card</h4>
@@ -1163,7 +1269,7 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
                             )}
                         </div>
                         <div className="popover-wrapper">
-                            <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'location' ? null : 'location')}>Location</button>
+                            <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'location' ? null : 'location')}><Icon name="location_on" size={20}/><span>Location</span></button>
                             {activePopover === 'location' && (
                                 <Popover onClose={() => setActivePopover(null)} trigger={null}>
                                     <h4>Set Location</h4>
@@ -1172,7 +1278,7 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
                             )}
                         </div>
                         <div className="popover-wrapper">
-                            <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'cover' ? null : 'cover')}>Cover</button>
+                            <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'cover' ? null : 'cover')}><Icon name="image" size={20}/><span>Cover</span></button>
                             {activePopover === 'cover' && (
                                 <Popover onClose={() => setActivePopover(null)} trigger={null}>
                                     <h4>Cover</h4>
@@ -1208,13 +1314,16 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
                             )}
                         </div>
                         <h3>Actions</h3>
-                        <button className="sidebar-btn" onClick={handleToggleSubscription}>{isSubscribed ? 'Unwatch' : 'Watch'}</button>
+                        <button className="sidebar-btn" onClick={handleToggleSubscription}>
+                            <Icon name={isSubscribed ? 'visibility_off' : 'visibility'} size={20} />
+                            <span>{isSubscribed ? 'Unwatch' : 'Watch'}</span>
+                        </button>
                         {customButtons.map(button => (
                             <button key={button.id} className="sidebar-btn automation-btn" onClick={() => executeCustomButton(button, card.id)}>
                                 {button.name}
                             </button>
                         ))}
-                        <button className="sidebar-btn delete" onClick={onDeleteCard}>Delete Card</button>
+                        <button className="sidebar-btn delete" onClick={onDeleteCard}><Icon name="delete" size={20}/><span>Delete Card</span></button>
                     </div>
                 </div>
             </div>
@@ -1312,7 +1421,7 @@ const List = ({ list, listIndex, visibilityMap, onUpdateListTitle, onDeleteList,
             aria-label="List title"
         />
         <button className="delete-list-btn" onClick={() => onDeleteList(listIndex)} aria-label="Delete list">
-          ×
+          <Icon name="delete" size={18} />
         </button>
       </div>
       <div className="cards-container">
@@ -1338,7 +1447,7 @@ const List = ({ list, listIndex, visibilityMap, onUpdateListTitle, onDeleteList,
         />
       ) : (
         <button className="add-card-btn" onClick={() => setIsAddingCard(true)}>
-          + Add a card
+          <Icon name="add" size={20} /> Add a card
         </button>
       )}
     </div>
@@ -1377,9 +1486,9 @@ const CalendarView = ({ boardData, onCardClick }) => {
     return (
         <div className="calendar-view">
             <div className="calendar-header">
-                <button onClick={() => changeMonth(-1)}>&lt;</button>
+                <button onClick={() => changeMonth(-1)} aria-label="Previous month"><Icon name="arrow_back_ios" /></button>
                 <h2>{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</h2>
-                <button onClick={() => changeMonth(1)}>&gt;</button>
+                <button onClick={() => changeMonth(1)} aria-label="Next month"><Icon name="arrow_forward_ios" /></button>
             </div>
             <div className="calendar-grid">
                 {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => <div key={d} className="calendar-weekday">{d}</div>)}
@@ -1631,7 +1740,7 @@ const ShareModal = ({ members, onInvite, onClose }) => {
     return (
       <div className="modal-overlay" onMouseDown={onClose}>
         <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
-          <button className="modal-close-btn" onClick={onClose} aria-label="Close modal">×</button>
+          <button className="modal-close-btn" onClick={onClose} aria-label="Close modal"><Icon name="close"/></button>
           <div className="modal-header">
             <h3 className="modal-title no-edit">Share Board</h3>
           </div>
@@ -1687,7 +1796,7 @@ const AutomationModal = ({ isOpen, onClose, automations, onUpdate, boardData, av
     return (
         <div className="modal-overlay" onMouseDown={onClose}>
             <div className="modal automation-modal" onMouseDown={(e) => e.stopPropagation()}>
-                <button className="modal-close-btn" onClick={onClose} aria-label="Close modal">×</button>
+                <button className="modal-close-btn" onClick={onClose} aria-label="Close modal"><Icon name="close"/></button>
                 <div className="modal-header">
                     <h3 className="modal-title no-edit">Automation</h3>
                 </div>
@@ -1782,7 +1891,7 @@ const CustomFieldsModal = ({ isOpen, onClose, definitions, onUpdate }) => {
     return (
          <div className="modal-overlay" onMouseDown={onClose}>
             <div className="modal automation-modal" onMouseDown={(e) => e.stopPropagation()}>
-                <button className="modal-close-btn" onClick={onClose} aria-label="Close modal">×</button>
+                <button className="modal-close-btn" onClick={onClose} aria-label="Close modal"><Icon name="close"/></button>
                 <div className="modal-header">
                     <h3 className="modal-title no-edit">Custom Fields</h3>
                 </div>
@@ -1955,7 +2064,7 @@ const AppearanceSettings = ({ theme, updateTheme, resetTheme, exportTheme, impor
                         <div className="theme-preview-card">
                             <p>Implement theme persistence</p>
                         </div>
-                        <button className="theme-preview-button">+ Add a card</button>
+                        <button className="theme-preview-button"><Icon name="add" size={20}/> Add a card</button>
                     </div>
                 </div>
             </div>
@@ -1981,15 +2090,15 @@ const SettingsModal = ({ isOpen, onClose, onClearData, theme, updateTheme, reset
     return (
         <div className="modal-overlay" onMouseDown={onClose}>
             <div className="modal settings-modal" onMouseDown={(e) => e.stopPropagation()}>
-                <button className="modal-close-btn" onClick={onClose} aria-label="Close modal">×</button>
+                <button className="modal-close-btn" onClick={onClose} aria-label="Close modal"><Icon name="close"/></button>
                 <div className="modal-header">
                     <h3 className="modal-title no-edit">Settings</h3>
                 </div>
                 <div className="settings-body">
                     <div className="settings-sidebar">
-                         <button onClick={() => setActiveTab('appearance')} className={activeTab === 'appearance' ? 'active' : ''}>Appearance</button>
-                         <button onClick={() => setActiveTab('general')} className={activeTab === 'general' ? 'active' : ''}>General</button>
-                         <button onClick={() => setActiveTab('licenses')} className={activeTab === 'licenses' ? 'active' : ''}>Licenses</button>
+                         <button onClick={() => setActiveTab('appearance')} className={activeTab === 'appearance' ? 'active' : ''}><Icon name="palette" size={20} /> Appearance</button>
+                         <button onClick={() => setActiveTab('general')} className={activeTab === 'general' ? 'active' : ''}><Icon name="tune" size={20} /> General</button>
+                         <button onClick={() => setActiveTab('licenses')} className={activeTab === 'licenses' ? 'active' : ''}><Icon name="description" size={20} /> Licenses</button>
                     </div>
                     <div className="settings-content">
                         {activeTab === 'licenses' && (
@@ -2245,9 +2354,11 @@ const App = () => {
   
   useEffect(() => {
     try {
-        localStorage.setItem('mosaic-board-data', JSON.stringify(boardData));
+        const sanitizedData = getSanitizedBoardDataForStorage(boardData);
+        localStorage.setItem('mosaic-board-data', JSON.stringify(sanitizedData));
     } catch(error) {
         console.error("Failed to save board data to localStorage", error);
+        alert("Could not save board data. Your browser's storage might be full.");
     }
   }, [boardData]);
   
@@ -2618,7 +2729,7 @@ useEffect(() => {
                         />
                       ) : (
                         <button className="add-list-btn" onClick={() => setIsAddingList(true)}>
-                          + Add another list
+                          <Icon name="add" size={20} /> Add another list
                         </button>
                       )}
                     </div>
@@ -2639,10 +2750,11 @@ useEffect(() => {
             </div>
         </div>
         <div className="header-right">
-            <button className="header-btn" onClick={() => setCustomFieldsModalOpen(true)} title="Custom Fields">Fields</button>
+            <button className="header-btn" onClick={() => setCustomFieldsModalOpen(true)}><Icon name="data_object" size={20}/><span>Fields</span></button>
             <div className="popover-wrapper">
                 <button className="filter-button" onClick={() => setFilterPopoverOpen(o => !o)}>
-                    Filter
+                    <Icon name="filter_list" size={20}/>
+                    <span>Filter</span>
                     {isFiltersActive && <span className="filter-active-indicator" />}
                 </button>
                 {isFilterPopoverOpen && (
@@ -2655,10 +2767,10 @@ useEffect(() => {
                     />
                 )}
             </div>
-            <button className="header-btn" onClick={() => setAutomationModalOpen(true)} title="Automation">🤖</button>
+            <button className="header-btn icon-only" onClick={() => setAutomationModalOpen(true)} aria-label="Automation"><Icon name="smart_toy" /></button>
             <div className="popover-wrapper">
-                <button className="header-btn" onClick={() => setNotificationsOpen(o => !o)} aria-label="Notifications">
-                    🔔
+                <button className="header-btn icon-only" onClick={() => setNotificationsOpen(o => !o)} aria-label="Notifications">
+                    <Icon name="notifications" />
                     {unreadNotificationsCount > 0 && <span className="notification-badge">{unreadNotificationsCount}</span>}
                 </button>
                 {isNotificationsOpen && (
@@ -2670,8 +2782,8 @@ useEffect(() => {
                     />
                 )}
             </div>
-             <button className="header-btn share-btn" onClick={() => setShareModalOpen(true)}>Share</button>
-             <button className="header-btn" onClick={() => setSettingsModalOpen(true)} title="Settings">⚙️</button>
+             <button className="header-btn share-btn" onClick={() => setShareModalOpen(true)}><Icon name="person_add" size={20}/><span>Share</span></button>
+             <button className="header-btn icon-only" onClick={() => setSettingsModalOpen(true)} aria-label="Settings"><Icon name="settings"/></button>
         </div>
       </header>
       <main className={`main-container view-${view.toLowerCase()}`}>
