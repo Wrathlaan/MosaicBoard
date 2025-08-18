@@ -150,13 +150,6 @@ const saveTheme = (theme: Theme): void => {
     localStorage.setItem('mosaic.theme', JSON.stringify(cleanTheme));
   } catch (error) {
     console.error('Failed to save theme to localStorage:', error);
-    // Try to clear some space and retry
-    try {
-      localStorage.removeItem('mosaic.theme');
-      localStorage.setItem('mosaic.theme', JSON.stringify(cleanTheme));
-    } catch (retryError) {
-      console.error('Failed to save theme even after clearing:', retryError);
-    }
   }
 };
 
