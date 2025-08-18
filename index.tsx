@@ -576,7 +576,7 @@ const FilterPopover = ({ filters, onFiltersChange, onClose, availableLabels, ava
 
     return (
         <Popover onClose={onClose} trigger={null}>
-            <div className="filter-popover">
+            <div className="filter-popover" data-component-name="Filter Popover" data-component-description="Allows users to filter the visible cards on the board by keyword, member, label, or due date.">
                 <h4>Filter Cards</h4>
                 <div className="filter-section">
                     <h5>Keyword</h5>
@@ -656,6 +656,8 @@ const Card = ({ card, isHidden, canEdit, onDragStart, onDragEnd, onClick, availa
       onDragStart={canEdit ? onDragStart : undefined}
       onDragEnd={canEdit ? onDragEnd : undefined}
       onClick={onClick}
+      data-component-name="Card"
+      data-component-description="Represents a single task or item. It's draggable and displays summary information."
     >
       {hasImageCover && <img src={cover.imageUrl} className="card-cover-image" alt="" />}
       {hasColorCover && <div className="card-cover-color" style={{ backgroundColor: cover.color }} />}
@@ -705,40 +707,75 @@ const Card = ({ card, isHidden, canEdit, onDragStart, onDragEnd, onClick, availa
 /**
  * AddItemForm Component
  */
-const AddItemForm = ({ placeholder, buttonText, onSubmit, onCancel }) => {
-  const [text, setText] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
+const AddItemForm = ({ placeholder, buttonText, onSubmit, onCancel, multiline = false, className = '' }) => {
+    const [text, setText] = useState('');
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
+    useEffect(() => {
+        if (multiline) {
+            textareaRef.current?.focus();
+        } else {
+            inputRef.current?.focus();
+        }
+    }, [multiline]);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (text.trim()) {
-      onSubmit(text);
-      setText('');
-    }
-  };
+    useEffect(() => {
+        if (multiline && textareaRef.current) {
+            textareaRef.current.style.height = 'auto'; // Reset height
+            textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+        }
+    }, [text, multiline]);
 
-  return (
-    <form onSubmit={handleSubmit} className="add-form">
-      <input
-        ref={inputRef}
-        type="text"
-        className="add-input"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        placeholder={placeholder}
-      />
-      <div className="form-controls">
-        <button type="submit" className="action-button">{buttonText}</button>
-        <button type="button" className="cancel-button" onMouseDown={onCancel} aria-label="Cancel">
-          <Icon name="close" size={20} />
-        </button>
-      </div>
-    </form>
-  );
+    const handleTextChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+        setText(e.target.value);
+    };
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (text.trim()) {
+            onSubmit(text);
+            setText('');
+        }
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            handleSubmit(e);
+        }
+    };
+
+    return (
+        <form onSubmit={handleSubmit} className={`add-form ${className}`} data-component-name="Add Item Form" data-component-description="A generic form for adding new items, such as cards or lists.">
+            {multiline ? (
+                <textarea
+                    ref={textareaRef}
+                    className="add-input"
+                    value={text}
+                    onChange={handleTextChange}
+                    placeholder={placeholder}
+                    onKeyDown={handleKeyDown}
+                    rows={3}
+                />
+            ) : (
+                <input
+                    ref={inputRef}
+                    type="text"
+                    className="add-input"
+                    value={text}
+                    onChange={handleTextChange}
+                    placeholder={placeholder}
+                />
+            )}
+            <div className="form-controls">
+                <button type="submit" className="action-button">{buttonText}</button>
+                <button type="button" className="cancel-button" onMouseDown={onCancel} aria-label="Cancel">
+                    <Icon name="close" size={20} />
+                </button>
+            </div>
+        </form>
+    );
 };
 
 const Checklist = ({ checklist, onUpdate, canEdit }) => {
@@ -747,7 +784,8 @@ const Checklist = ({ checklist, onUpdate, canEdit }) => {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const progress = checklist.items.length > 0 ? (checklist.items.filter(i => i.completed).length / checklist.items.length) * 100 : 0;
 
-    const handleAddItem = () => {
+    const handleAddItem = (e: React.FormEvent) => {
+        e.preventDefault();
         if (newItemText.trim() && canEdit) {
             const newItem: ChecklistItemData = { id: generateId(), text: newItemText, completed: false, attachments: [] };
             onUpdate({ ...checklist, items: [...checklist.items, newItem] });
@@ -822,16 +860,17 @@ const Checklist = ({ checklist, onUpdate, canEdit }) => {
                     </div>
                 ))}
             </div>
-            {canEdit && <div className="add-checklist-item-form">
+            {canEdit && <form className="add-checklist-item-form" onSubmit={handleAddItem}>
                 <input
                     type="text"
+                    className="add-input"
                     value={newItemText}
                     onChange={(e) => setNewItemText(e.target.value)}
                     placeholder="Add an item"
                 />
-                <button onClick={handleAddItem} disabled={!newItemText.trim()}>Add</button>
+                <button type="submit" className="action-button" disabled={!newItemText.trim()}>Add</button>
                 <input type="file" ref={fileInputRef} onChange={handleFileChange} style={{display: 'none'}} />
-            </div>}
+            </form>}
         </div>
     );
 };
@@ -892,9 +931,9 @@ const CommentForm = ({ onSubmit, availableMembers }) => {
                 </div>
             )}
             <div className="comment-controls">
-                <button type="submit" disabled={!text.trim() && stagedAttachments.length === 0}>Save</button>
+                <button type="submit" className="action-button" disabled={!text.trim() && stagedAttachments.length === 0}>Save</button>
                 <div className="popover-wrapper">
-                  <button type="button" onClick={() => setShowEmojiPicker(p => !p)}><Icon name="mood" /></button>
+                  <button type="button" className="sidebar-btn icon-only" onClick={() => setShowEmojiPicker(p => !p)}><Icon name="mood" /></button>
                   {showEmojiPicker && (
                     <Popover onClose={() => setShowEmojiPicker(false)} trigger={null}>
                       <div className="emoji-picker">
@@ -903,7 +942,7 @@ const CommentForm = ({ onSubmit, availableMembers }) => {
                     </Popover>
                   )}
                 </div>
-                <button type="button" onClick={() => fileInputRef.current?.click()} aria-label="Attach file"><Icon name="attachment" /></button>
+                <button type="button" className="sidebar-btn icon-only" onClick={() => fileInputRef.current?.click()} aria-label="Attach file"><Icon name="attachment" /></button>
                 <input type="file" ref={fileInputRef} onChange={handleFileChange} multiple style={{display: 'none'}}/>
             </div>
         </form>
@@ -1132,7 +1171,7 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
 
     return (
         <div className="modal-overlay" onMouseDown={onClose}>
-            <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="modal" onMouseDown={(e) => e.stopPropagation()} data-component-name="Card Modal" data-component-description="A detailed view for editing a card's properties like description, members, labels, and checklists.">
                 <button className="modal-close-btn" onClick={onClose} aria-label="Close modal"><Icon name="close"/></button>
                 <div className="modal-header">
                     <input 
@@ -1500,6 +1539,8 @@ const List = ({ list, listIndex, permissions, visibilityMap, onUpdateListTitle, 
       onDragOver={permissions.canEditBoard ? handleDragOver : undefined}
       onDragLeave={permissions.canEditBoard ? handleDragLeave : undefined}
       onDrop={permissions.canEditBoard ? handleDrop : undefined}
+      data-component-name="List"
+      data-component-description="A container for a collection of cards, representing a stage in a workflow."
     >
       <div className="list-header">
         <input 
@@ -1540,10 +1581,13 @@ const List = ({ list, listIndex, permissions, visibilityMap, onUpdateListTitle, 
             buttonText="Add Card"
             onSubmit={handleAddCardSubmit}
             onCancel={() => setIsAddingCard(false)}
+            multiline
+            className="add-card-form"
           />
         ) : (
-          <button className="add-card-btn" onClick={() => setIsAddingCard(true)}>
-            <Icon name="add" size={20} /> Add a card
+          <button className="add-card-btn" onClick={() => setIsAddingCard(true)} aria-label="Add a card">
+            <Icon name="add" size={20} />
+            <span>Add a card</span>
           </button>
         )
       )}
@@ -1581,7 +1625,7 @@ const CalendarView = ({ boardData, onCardClick }) => {
     const allCards = boardData.flatMap((list, listIndex) => list.cards.map((card, cardIndex) => ({ ...card, listIndex, cardIndex })));
     
     return (
-        <div className="calendar-view">
+        <div className="calendar-view" data-component-name="Calendar View" data-component-description="Displays cards with due dates on a monthly calendar.">
             <div className="calendar-header">
                 <button onClick={() => changeMonth(-1)} aria-label="Previous month"><Icon name="arrow_back_ios" /></button>
                 <h2>{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</h2>
@@ -1627,7 +1671,7 @@ const TimelineView = ({ boardData, onCardClick }) => {
     }
 
     return (
-        <div className="timeline-view">
+        <div className="timeline-view" data-component-name="Timeline View" data-component-description="A Gantt-like view for visualizing cards with start and end dates over time.">
             <div className="timeline-header">
                 {dateMarkers.map(d => (
                     <div key={d.toString()} className="timeline-date-marker">
@@ -1695,7 +1739,7 @@ const TableView = ({ boardData, onCardClick, availableLabels, availableMembers }
     };
 
     return (
-        <div className="table-view">
+        <div className="table-view" data-component-name="Table View" data-component-description="A spreadsheet-style view of all cards, allowing for sorting and quick scanning.">
             <table>
                 <thead>
                     <tr>
@@ -1766,7 +1810,7 @@ const DashboardView = ({ boardData, availableLabels, availableMembers }) => {
     }
     
     return (
-        <div className="dashboard-view">
+        <div className="dashboard-view" data-component-name="Dashboard View" data-component-description="Provides an overview of board statistics with charts for cards per list, member, and label.">
             <Chart title="Cards per List" data={cardsByList} />
             <Chart title="Cards per Member" data={cardsByMember} />
             <Chart title="Cards per Label" data={cardsByLabel} colorProp="color" />
@@ -1784,7 +1828,7 @@ const MapView = ({ boardData, onCardClick }) => {
     }
 
     return (
-        <div className="map-view">
+        <div className="map-view" data-component-name="Map View" data-component-description="Shows cards that have a physical location assigned.">
             <h3>Cards with Locations</h3>
             <ul>
                 {cardsWithLocation.map(card => (
@@ -1823,78 +1867,6 @@ const NotificationsPopover = ({ notifications, onNotificationClick, onMarkAllRea
     );
 };
 
-const ShareModal = ({ members, allUsers, boardMembers, onInvite, onUpdateRole, onRemoveMember, onClose, permissions }) => {
-    const [searchQuery, setSearchQuery] = useState('');
-
-    const filteredUsers = useMemo(() => {
-        if (!searchQuery) return [];
-        const query = searchQuery.toLowerCase();
-        const boardMemberIds = boardMembers.map(bm => bm.userId);
-        return allUsers.filter(u => 
-            !boardMemberIds.includes(u.id) && 
-            (u.name.toLowerCase().includes(query) || u.email.toLowerCase().includes(query))
-        );
-    }, [searchQuery, allUsers, boardMembers]);
-    
-    return (
-      <div className="modal-overlay" onMouseDown={onClose}>
-        <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
-          <button className="modal-close-btn" onClick={onClose} aria-label="Close modal"><Icon name="close"/></button>
-          <div className="modal-header">
-            <h3 className="modal-title no-edit">Share Board</h3>
-          </div>
-          <div className="share-modal-body">
-            {permissions.canManageMembers && (
-                <div className="share-invite-section">
-                    <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search users by name or email..." />
-                    {filteredUsers.length > 0 && (
-                        <div className="invite-search-results">
-                            {filteredUsers.map(user => (
-                                <div key={user.id} className="invite-user-item">
-                                    <div className="user-info">
-                                        <img src={user.avatarUrl} alt={user.name} className="member-avatar" />
-                                        <span>{user.name} ({user.email})</span>
-                                    </div>
-                                    <button onClick={() => { onInvite(user.id); setSearchQuery(''); }}>Invite</button>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-            )}
-            <div className="share-members-list">
-                <h4>Board Members</h4>
-                {members.map(member => {
-                    const boardMember = boardMembers.find(bm => bm.userId === member.id);
-                    if (!boardMember) return null;
-                    const canChangeRole = permissions.canManageMembers && (permissions.isOwner || (boardMember.role !== 'owner' && boardMember.role !== 'admin'));
-                    const canRemove = permissions.canManageMembers && boardMember.role !== 'owner';
-
-                    return (
-                        <div key={member.id} className="share-member-item">
-                            <img src={member.avatarUrl} alt={member.name} className="member-avatar" />
-                            <span className="member-name">{member.name}</span>
-                            <select 
-                                value={boardMember.role}
-                                onChange={(e) => onUpdateRole(member.id, e.target.value as Role)}
-                                disabled={!canChangeRole}
-                            >
-                                {permissions.isOwner && <option value="owner">Owner</option>}
-                                {(permissions.isOwner || (boardMember.role !== 'owner')) && <option value="admin">Admin</option>}
-                                <option value="member">Member</option>
-                                <option value="viewer">Viewer</option>
-                            </select>
-                            {canRemove && <button className="remove-member-btn" onClick={() => onRemoveMember(member.id)} aria-label="Remove member"><Icon name="close" size={18}/></button>}
-                        </div>
-                    );
-                })}
-            </div>
-          </div>
-        </div>
-      </div>
-    )
-}
-
 const AutomationModal = ({ isOpen, onClose, automations, onUpdate, boardData, availableLabels, availableMembers }) => {
     if (!isOpen) return null;
     const [activeTab, setActiveTab] = useState('rules');
@@ -1922,7 +1894,7 @@ const AutomationModal = ({ isOpen, onClose, automations, onUpdate, boardData, av
 
     return (
         <div className="modal-overlay" onMouseDown={onClose}>
-            <div className="modal automation-modal" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="modal automation-modal" onMouseDown={(e) => e.stopPropagation()} data-component-name="Automation Modal" data-component-description="Configure automation rules, scheduled commands, and custom buttons for the board.">
                 <button className="modal-close-btn" onClick={onClose} aria-label="Close modal"><Icon name="close"/></button>
                 <div className="modal-header">
                     <h3 className="modal-title no-edit">Automation</h3>
@@ -1986,69 +1958,6 @@ const AutomationModal = ({ isOpen, onClose, automations, onUpdate, boardData, av
                             <button className="action-button">Add Board Button</button>
                         </div>
                     )}
-                </div>
-            </div>
-        </div>
-    );
-};
-
-const CustomFieldsModal = ({ isOpen, onClose, definitions, onUpdate }) => {
-    if (!isOpen) return null;
-    const [newFieldName, setNewFieldName] = useState('');
-    const [newFieldType, setNewFieldType] = useState<CustomFieldDefinition['type']>('text');
-
-    const handleAddField = (e) => {
-        e.preventDefault();
-        if (newFieldName.trim()) {
-            const newField: CustomFieldDefinition = {
-                id: generateId(),
-                name: newFieldName.trim(),
-                type: newFieldType,
-                ...(newFieldType === 'dropdown' && { options: ['Option 1', 'Option 2'] })
-            };
-            onUpdate([...definitions, newField]);
-            setNewFieldName('');
-        }
-    };
-    
-    const handleDeleteField = (id: string) => {
-        onUpdate(definitions.filter(d => d.id !== id));
-    };
-
-    return (
-         <div className="modal-overlay" onMouseDown={onClose}>
-            <div className="modal automation-modal" onMouseDown={(e) => e.stopPropagation()}>
-                <button className="modal-close-btn" onClick={onClose} aria-label="Close modal"><Icon name="close"/></button>
-                <div className="modal-header">
-                    <h3 className="modal-title no-edit">Custom Fields</h3>
-                </div>
-                <div className="automation-content">
-                    <h4>Board Fields</h4>
-                    <ul className="automation-list">
-                        {definitions.map(def => (
-                            <li key={def.id} className="custom-field-def-item">
-                                <span><strong>{def.name}</strong> ({def.type})</span>
-                                <button onClick={() => handleDeleteField(def.id)}>Delete</button>
-                            </li>
-                        ))}
-                    </ul>
-                    <form onSubmit={handleAddField} className="custom-field-form">
-                        <h4>Add New Field</h4>
-                        <input
-                            type="text"
-                            value={newFieldName}
-                            onChange={(e) => setNewFieldName(e.target.value)}
-                            placeholder="Field Name (e.g., Story Points)"
-                        />
-                        <select value={newFieldType} onChange={(e) => setNewFieldType(e.target.value as any)}>
-                            <option value="text">Text</option>
-                            <option value="number">Number</option>
-                            <option value="date">Date</option>
-                            <option value="checkbox">Checkbox</option>
-                            <option value="dropdown">Dropdown</option>
-                        </select>
-                        <button type="submit" className="action-button">Add Field</button>
-                    </form>
                 </div>
             </div>
         </div>
@@ -2244,7 +2153,7 @@ const AppearanceSettings = ({ theme, updateTheme, resetTheme, exportTheme, impor
     );
 };
 
-const SettingsModal = ({ isOpen, onClose, onClearData, theme, updateTheme, resetTheme, exportTheme, importTheme, onOpenElementCustomizer, onExportJson, onExportCsv, onImportJson }) => {
+const SettingsModal = ({ isOpen, onClose, onClearData, theme, updateTheme, resetTheme, exportTheme, importTheme, onOpenElementCustomizer, onExportJson, onExportCsv, onImportJson, isDevMode, onToggleDevMode, members, allUsers, boardMembers, onInvite, onUpdateRole, onRemoveMember, permissions, definitions, onUpdateDefinitions }) => {
     if (!isOpen) return null;
     const [activeTab, setActiveTab] = useState('appearance');
     const boardImportInputRef = useRef<HTMLInputElement>(null);
@@ -2272,9 +2181,44 @@ const SettingsModal = ({ isOpen, onClose, onClearData, theme, updateTheme, reset
         if (e.target) e.target.value = ''; // Allow re-uploading same file
     };
 
+    // --- Members/Share Logic ---
+    const [searchQuery, setSearchQuery] = useState('');
+    const filteredUsers = useMemo(() => {
+        if (!searchQuery) return [];
+        const query = searchQuery.toLowerCase();
+        const boardMemberIds = boardMembers.map(bm => bm.userId);
+        return allUsers.filter(u => 
+            !boardMemberIds.includes(u.id) && 
+            (u.name.toLowerCase().includes(query) || u.email.toLowerCase().includes(query))
+        );
+    }, [searchQuery, allUsers, boardMembers]);
+
+    // --- Custom Fields Logic ---
+    const [newFieldName, setNewFieldName] = useState('');
+    const [newFieldType, setNewFieldType] = useState<CustomFieldDefinition['type']>('text');
+
+    const handleAddField = (e) => {
+        e.preventDefault();
+        if (newFieldName.trim()) {
+            const newField: CustomFieldDefinition = {
+                id: generateId(),
+                name: newFieldName.trim(),
+                type: newFieldType,
+                ...(newFieldType === 'dropdown' && { options: ['Option 1', 'Option 2'] })
+            };
+            onUpdateDefinitions([...definitions, newField]);
+            setNewFieldName('');
+        }
+    };
+    
+    const handleDeleteField = (id: string) => {
+        onUpdateDefinitions(definitions.filter(d => d.id !== id));
+    };
+
+
     return (
         <div className="modal-overlay" onMouseDown={onClose}>
-            <div className="modal settings-modal" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="modal settings-modal" onMouseDown={(e) => e.stopPropagation()} data-component-name="Settings Modal" data-component-description="Main settings panel for appearance, data management (import/export), and other application settings.">
                 <button className="modal-close-btn" onClick={onClose} aria-label="Close modal"><Icon name="close"/></button>
                 <div className="modal-header">
                     <h3 className="modal-title no-edit">Settings</h3>
@@ -2282,23 +2226,108 @@ const SettingsModal = ({ isOpen, onClose, onClearData, theme, updateTheme, reset
                 <div className="settings-body">
                     <div className="settings-sidebar">
                          <button onClick={() => setActiveTab('appearance')} className={activeTab === 'appearance' ? 'active' : ''}><Icon name="palette" size={20} /> Appearance</button>
+                         <button onClick={() => setActiveTab('members')} className={activeTab === 'members' ? 'active' : ''}><Icon name="group" size={20} /> Members</button>
+                         <button onClick={() => setActiveTab('fields')} className={activeTab === 'fields' ? 'active' : ''}><Icon name="data_object" size={20} /> Fields</button>
                          <button onClick={() => setActiveTab('general')} className={activeTab === 'general' ? 'active' : ''}><Icon name="tune" size={20} /> General</button>
+                         <button onClick={() => setActiveTab('api')} className={activeTab === 'api' ? 'active' : ''}><Icon name="api" size={20} /> API</button>
                          <button onClick={() => setActiveTab('licenses')} className={activeTab === 'licenses' ? 'active' : ''}><Icon name="description" size={20} /> Licenses</button>
+                         <button onClick={() => setActiveTab('dev')} className={activeTab === 'dev' ? 'active' : ''}><Icon name="code" size={20} /> Dev</button>
                     </div>
                     <div className="settings-content">
-                        {activeTab === 'licenses' && (
+                        {activeTab === 'appearance' && (
+                            <AppearanceSettings 
+                                theme={theme}
+                                updateTheme={updateTheme}
+                                resetTheme={resetTheme}
+                                exportTheme={exportTheme}
+                                importTheme={importTheme}
+                                onOpenElementCustomizer={onOpenElementCustomizer}
+                            />
+                        )}
+                        {activeTab === 'members' && (
                             <div>
-                                <h4>Third-Party Licenses</h4>
-                                <p>MosaicBoard is built using fantastic open-source software. We are grateful to the developers of these projects.</p>
-                                <ul className="license-list">
-                                    {licenses.map(lib => (
-                                        <li key={lib.name} className="license-item">
-                                            <strong>{lib.name}</strong>
-                                            <span> - </span>
-                                            <a href={lib.url} target="_blank" rel="noopener noreferrer">{lib.license}</a>
+                                <h4>Share & Members</h4>
+                                <div className="share-invite-section">
+                                    <p>Invite new users to collaborate on this board.</p>
+                                    {permissions.canManageMembers ? (
+                                        <>
+                                            <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search users by name or email..." />
+                                            {filteredUsers.length > 0 && (
+                                                <div className="invite-search-results">
+                                                    {filteredUsers.map(user => (
+                                                        <div key={user.id} className="invite-user-item">
+                                                            <div className="user-info">
+                                                                <img src={user.avatarUrl} alt={user.name} className="member-avatar" />
+                                                                <span>{user.name} ({user.email})</span>
+                                                            </div>
+                                                            <button onClick={() => { onInvite(user.id); setSearchQuery(''); }}>Invite</button>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </>
+                                    ) : (
+                                      <p>You don't have permission to invite new members.</p>
+                                    )}
+                                </div>
+                                <div className="share-members-list">
+                                    <h4>Board Members</h4>
+                                    {members.map(member => {
+                                        const boardMember = boardMembers.find(bm => bm.userId === member.id);
+                                        if (!boardMember) return null;
+                                        const canChangeRole = permissions.canManageMembers && (permissions.isOwner || (boardMember.role !== 'owner' && boardMember.role !== 'admin'));
+                                        const canRemove = permissions.canManageMembers && boardMember.role !== 'owner';
+
+                                        return (
+                                            <div key={member.id} className="share-member-item">
+                                                <img src={member.avatarUrl} alt={member.name} className="member-avatar" />
+                                                <span className="member-name">{member.name}</span>
+                                                <select 
+                                                    value={boardMember.role}
+                                                    onChange={(e) => onUpdateRole(member.id, e.target.value as Role)}
+                                                    disabled={!canChangeRole}
+                                                >
+                                                    {permissions.isOwner && <option value="owner">Owner</option>}
+                                                    {(permissions.isOwner || (boardMember.role !== 'owner')) && <option value="admin">Admin</option>}
+                                                    <option value="member">Member</option>
+                                                    <option value="viewer">Viewer</option>
+                                                </select>
+                                                {canRemove && <button className="remove-member-btn" onClick={() => onRemoveMember(member.id)} aria-label="Remove member"><Icon name="close" size={18}/></button>}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+                        {activeTab === 'fields' && (
+                           <div>
+                                <h4>Custom Fields</h4>
+                                <p>Manage custom field definitions that can be applied to all cards on the board.</p>
+                                <ul className="automation-list">
+                                    {definitions.map(def => (
+                                        <li key={def.id} className="custom-field-def-item">
+                                            <span><strong>{def.name}</strong> ({def.type})</span>
+                                            <button onClick={() => handleDeleteField(def.id)}>Delete</button>
                                         </li>
                                     ))}
                                 </ul>
+                                <form onSubmit={handleAddField} className="custom-field-form">
+                                    <h4>Add New Field</h4>
+                                    <input
+                                        type="text"
+                                        value={newFieldName}
+                                        onChange={(e) => setNewFieldName(e.target.value)}
+                                        placeholder="Field Name (e.g., Story Points)"
+                                    />
+                                    <select value={newFieldType} onChange={(e) => setNewFieldType(e.target.value as any)}>
+                                        <option value="text">Text</option>
+                                        <option value="number">Number</option>
+                                        <option value="date">Date</option>
+                                        <option value="checkbox">Checkbox</option>
+                                        <option value="dropdown">Dropdown</option>
+                                    </select>
+                                    <button type="submit" className="action-button">Add Field</button>
+                                </form>
                             </div>
                         )}
                         {activeTab === 'general' && (
@@ -2326,15 +2355,52 @@ const SettingsModal = ({ isOpen, onClose, onClearData, theme, updateTheme, reset
                                 </div>
                             </div>
                         )}
-                         {activeTab === 'appearance' && (
-                            <AppearanceSettings 
-                                theme={theme}
-                                updateTheme={updateTheme}
-                                resetTheme={resetTheme}
-                                exportTheme={exportTheme}
-                                importTheme={importTheme}
-                                onOpenElementCustomizer={onOpenElementCustomizer}
-                            />
+                         {activeTab === 'api' && (
+                            <div>
+                                <h4>API Integrations</h4>
+                                <div className="setting-item">
+                                    <h5>Google Drive</h5>
+                                    <p>Connect your Google Drive account to sync board attachments and backups automatically.</p>
+                                    <div className="api-integration-status">
+                                        <span>Status: <span className="status-disconnected">Not Connected</span></span>
+                                        <button 
+                                            className="sidebar-btn" 
+                                            onClick={() => alert('Google Drive API integration coming soon!')}
+                                        >
+                                            <Icon name="link" size={20} />
+                                            Connect to Google Drive
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                        {activeTab === 'dev' && (
+                            <div>
+                                <h4>Developer Tools</h4>
+                                <div className="setting-item">
+                                    <h5>Component Inspector</h5>
+                                    <p>Enable to see component names and descriptions when you hover over them.</p>
+                                    <label className="toggle-control">
+                                        <input type="checkbox" checked={isDevMode} onChange={onToggleDevMode} />
+                                        <span>Enable Inspector</span>
+                                    </label>
+                                </div>
+                            </div>
+                        )}
+                        {activeTab === 'licenses' && (
+                            <div>
+                                <h4>Third-Party Licenses</h4>
+                                <p>MosaicBoard is built using fantastic open-source software. We are grateful to the developers of these projects.</p>
+                                <ul className="license-list">
+                                    {licenses.map(lib => (
+                                        <li key={lib.name} className="license-item">
+                                            <strong>{lib.name}</strong>
+                                            <span> - </span>
+                                            <a href={lib.url} target="_blank" rel="noopener noreferrer">{lib.license}</a>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
                         )}
                     </div>
                 </div>
@@ -2434,6 +2500,21 @@ const ElementCustomizerModal = ({ isOpen, onClose, originalCss, onSave }) => {
         </div>
     );
 };
+
+/**
+ * Dev Tooltip Component
+ */
+const DevTooltip = ({ content, x, y, visible }) => {
+    if (!visible) return null;
+    return (
+        <div 
+            className="dev-tooltip" 
+            style={{ top: y, left: x }}
+            dangerouslySetInnerHTML={{ __html: content }}
+        />
+    );
+};
+
 
 /**
  * Main App Component
@@ -2608,12 +2689,14 @@ const App = () => {
 
   const [notifications, setNotifications] = useState<NotificationData[]>([]);
   const [isNotificationsOpen, setNotificationsOpen] = useState(false);
-  const [isShareModalOpen, setShareModalOpen] = useState(false);
   const [isAutomationModalOpen, setAutomationModalOpen] = useState(false);
-  const [isCustomFieldsModalOpen, setCustomFieldsModalOpen] = useState(false);
   const [isSettingsModalOpen, setSettingsModalOpen] = useState(false);
   const [isElementCustomizerOpen, setElementCustomizerOpen] = useState(false);
   const [lastMovedCard, setLastMovedCard] = useState<{id: string, direction: 'left' | 'right'} | null>(null);
+  const [isDevMode, setIsDevMode] = useState(false);
+  const [devTooltip, setDevTooltip] = useState<{visible: boolean; content: string; x: number; y: number}>({
+      visible: false, content: '', x: 0, y: 0,
+  });
 
   const [automations, setAutomations] = useState<Automations>({
       rules: [
@@ -2698,9 +2781,7 @@ const App = () => {
             else if (selectedCard) handleCloseModal();
             else if (isFilterPopoverOpen) setFilterPopoverOpen(false);
             else if (isNotificationsOpen) setNotificationsOpen(false);
-            else if (isShareModalOpen) setShareModalOpen(false);
             else if (isAutomationModalOpen) setAutomationModalOpen(false);
-            else if (isCustomFieldsModalOpen) setCustomFieldsModalOpen(false);
             else if (isSettingsModalOpen) setSettingsModalOpen(false);
             else if (isTyping) (activeElement as HTMLElement).blur();
         }
@@ -2714,7 +2795,7 @@ const App = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-}, [selectedCard, isFilterPopoverOpen, isNotificationsOpen, isShareModalOpen, isAutomationModalOpen, isCustomFieldsModalOpen, isSettingsModalOpen, isElementCustomizerOpen]);
+}, [selectedCard, isFilterPopoverOpen, isNotificationsOpen, isAutomationModalOpen, isSettingsModalOpen, isElementCustomizerOpen]);
 
 useEffect(() => {
     const checkDueDates = () => {
@@ -2755,6 +2836,47 @@ useEffect(() => {
     }, 60 * 1000);
     return () => clearInterval(interval);
 }, [automations.scheduled, boardData]);
+
+useEffect(() => {
+    if (!isDevMode) {
+        setDevTooltip({ visible: false, content: '', x: 0, y: 0 });
+        return;
+    }
+
+    let currentTarget: HTMLElement | null = null;
+
+    const handleMouseMove = (e: MouseEvent) => {
+        const target = e.target as HTMLElement;
+        const componentEl = target.closest<HTMLElement>('[data-component-name]');
+
+        // Update position continuously
+        setDevTooltip(prev => ({ ...prev, x: e.clientX, y: e.clientY }));
+
+        // If we are on a new component, update the content
+        if (componentEl && componentEl !== currentTarget) {
+            currentTarget = componentEl;
+            const name = componentEl.getAttribute('data-component-name');
+            const description = componentEl.getAttribute('data-component-description');
+            setDevTooltip(prev => ({
+                ...prev,
+                visible: true,
+                content: `<strong>${name}</strong><p>${description}</p>`,
+            }));
+        } 
+        // If we moved off a component, hide the tooltip
+        else if (!componentEl && currentTarget) {
+            currentTarget = null;
+            setDevTooltip(prev => ({ ...prev, visible: false }));
+        }
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+
+    return () => {
+        document.removeEventListener('mousemove', handleMouseMove);
+    };
+}, [isDevMode]);
+
 
   const permissions = usePermissions(currentUser, boardMembers);
 
@@ -3206,15 +3328,17 @@ useEffect(() => {
                         lastMovedCard={lastMovedCard}
                       />
                     ))}
-                    {permissions.canEditBoard && <div className="list-container">
+                    {permissions.canEditBoard && <div className={`list-container ${!isAddingList ? 'add-list-placeholder' : ''}`}>
                       {isAddingList ? (
                         <AddItemForm
                           placeholder="Enter list title..." buttonText="Add List"
                           onSubmit={handleAddList} onCancel={() => setIsAddingList(false)}
+                          className="add-list-form"
                         />
                       ) : (
-                        <button className="add-list-btn" onClick={() => setIsAddingList(true)}>
-                          <Icon name="add" size={20} /> Add another list
+                        <button className="add-list-btn" onClick={() => setIsAddingList(true)} aria-label="Add another list">
+                          <Icon name="add" size={20} />
+                          <span>Add another list</span>
                         </button>
                       )}
                     </div>}
@@ -3225,7 +3349,7 @@ useEffect(() => {
 
   return (
     <>
-      <header>
+      <header data-component-name="Main Header" data-component-description="The main application header containing the board title, view switcher, and primary action buttons like filter and share.">
         <h1>MosaicBoard</h1>
         <div className="header-center">
             <div className="view-switcher">
@@ -3235,7 +3359,6 @@ useEffect(() => {
             </div>
         </div>
         <div className="header-right">
-            {permissions.canManageSettings && <button className="header-btn" onClick={() => setCustomFieldsModalOpen(true)}><Icon name="data_object" size={20}/><span>Fields</span></button>}
             <div className="popover-wrapper">
                 <button className="filter-button" onClick={() => setFilterPopoverOpen(o => !o)}>
                     <Icon name="filter_list" size={20}/>
@@ -3267,7 +3390,6 @@ useEffect(() => {
                     />
                 )}
             </div>
-             <button className="header-btn share-btn" onClick={() => setShareModalOpen(true)}><Icon name="person_add" size={20}/><span>Share</span></button>
              <div className="user-profile">
                 <img src={currentUser.avatarUrl} alt={currentUser.name} className="member-avatar" />
              </div>
@@ -3295,18 +3417,6 @@ useEffect(() => {
             boardData={boardData}
         />
       )}
-      {isShareModalOpen && (
-          <ShareModal 
-            members={availableMembers} 
-            allUsers={allUsers}
-            boardMembers={boardMembers}
-            onInvite={handleInviteUser} 
-            onUpdateRole={handleUpdateRole}
-            onRemoveMember={handleRemoveMember}
-            onClose={() => setShareModalOpen(false)} 
-            permissions={permissions}
-          />
-      )}
       <AutomationModal
         isOpen={isAutomationModalOpen}
         onClose={() => setAutomationModalOpen(false)}
@@ -3316,12 +3426,6 @@ useEffect(() => {
         availableLabels={availableLabels}
         availableMembers={availableMembers}
       />
-      <CustomFieldsModal
-        isOpen={isCustomFieldsModalOpen}
-        onClose={() => setCustomFieldsModalOpen(false)}
-        definitions={customFieldDefinitions}
-        onUpdate={setCustomFieldDefinitions}
-      />
       <SettingsModal
         isOpen={isSettingsModalOpen}
         onClose={() => setSettingsModalOpen(false)}
@@ -3330,6 +3434,17 @@ useEffect(() => {
         onExportJson={handleExportJson}
         onExportCsv={handleExportCsv}
         onImportJson={handleImportJson}
+        isDevMode={isDevMode}
+        onToggleDevMode={() => setIsDevMode(p => !p)}
+        members={availableMembers} 
+        allUsers={allUsers}
+        boardMembers={boardMembers}
+        onInvite={handleInviteUser} 
+        onUpdateRole={handleUpdateRole}
+        onRemoveMember={handleRemoveMember}
+        permissions={permissions}
+        definitions={customFieldDefinitions}
+        onUpdateDefinitions={setCustomFieldDefinitions}
         {...themeManager}
       />
        <ElementCustomizerModal
@@ -3338,6 +3453,7 @@ useEffect(() => {
         originalCss={themeManager.customCss}
         onSave={themeManager.updateCustomCss}
       />
+      <DevTooltip visible={devTooltip.visible} content={devTooltip.content} x={devTooltip.x} y={devTooltip.y} />
     </>
   );
 };
