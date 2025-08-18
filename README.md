@@ -6,6 +6,49 @@ MosaicBoard is a feature-rich, Trello-like project management application design
 
 *A clean, modern interface showing multiple lists like "Website Redesign", "Q2 Features", and "Done". Cards within the lists display titles, colored labels, cover images, and member avatars. The header provides options for different views (Board, Calendar, Table, etc.), filtering, and settings.*
 
+## Building the Application
+
+This project is configured to be packaged as a standalone desktop application using Electron.
+
+### Prerequisites
+
+- [Node.js](https://nodejs.org/) and npm (or your favorite package manager).
+
+### Build Steps
+
+1.  **Install Dependencies**:
+    Open your terminal in the project root and run:
+    ```bash
+    npm install
+    ```
+
+2.  **Build the Executable**:
+    To build the application for your current platform, run:
+    ```bash
+    npm run dist
+    ```
+    This command first builds the React frontend, then packages it with Electron into an executable.
+
+3.  **Find the Output**:
+    The installer and portable executable files will be located in the `dist/` directory.
+
+## Development
+
+To run the application in development mode with hot-reloading:
+
+1.  **Start the Renderer**:
+    In one terminal, run the Vite development server:
+    ```bash
+    npm run dev
+    ```
+
+2.  **Start Electron**:
+    In a second terminal, run the Electron main process:
+    ```bash
+    npm run dev:electron
+    ```
+    This will open the application window, loading the content from the Vite server.
+
 ## Key Features
 
 ### Core Board Functionality

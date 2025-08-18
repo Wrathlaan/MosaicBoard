@@ -1,6 +1,19 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
 
+// --- Electron IPC Definition ---
+interface ElectronAPI {
+  setStartOnLogin: (enabled: boolean) => void;
+  getStartOnLogin: () => Promise<boolean>;
+  IS_DESKTOP: boolean;
+}
+
+declare global {
+  interface Window {
+    electronAPI: ElectronAPI;
+  }
+}
+
 // --- THEME ---
 interface Theme {
     mode: 'system' | 'light' | 'dark';
@@ -2222,7 +2235,7 @@ const SettingsModal = ({ isOpen, onClose, onClearData, theme, updateTheme, reset
     if (!isOpen) return null;
     const [activeTab, setActiveTab] = useState('appearance');
     const boardImportInputRef = useRef<HTMLInputElement>(null);
-    const isDesktopMode = (window as any).DESKTOP_MODE === true;
+    const isDesktopMode = !!window.electronAPI;
     const [licenses, setLicenses] = useState(DEFAULT_LICENSES);
     const [licenseSearch, setLicenseSearch] = useState('');
 
@@ -2896,15 +2909,23 @@ const App = () => {
     return 4;
   });
 
-  const [startOnLogin, setStartOnLogin] = useState<boolean>(() => {
-    try {
-        const saved = localStorage.getItem('mosaic.startOnLogin');
-        return saved ? JSON.parse(saved) : false;
-    } catch (e) {
-        console.error("Failed to parse startOnLogin from localStorage", e);
-        return false;
+  const [startOnLogin, setStartOnLogin] = useState(false);
+  const isDesktopMode = !!window.electronAPI;
+
+  useEffect(() => {
+    if (isDesktopMode) {
+      window.electronAPI.getStartOnLogin().then(value => {
+        setStartOnLogin(value);
+      });
     }
-  });
+  }, [isDesktopMode]);
+  
+  const handleSetStartOnLogin = (enabled: boolean) => {
+    if (isDesktopMode) {
+      window.electronAPI.setStartOnLogin(enabled);
+      setStartOnLogin(enabled);
+    }
+  };
   
   const availableMembers = useMemo(() => {
     const memberIds = boardMembers.map(bm => bm.userId);
@@ -2945,10 +2966,6 @@ const App = () => {
     localStorage.setItem('mosaic-custom-fields', JSON.stringify(customFieldDefinitions));
   }, [customFieldDefinitions]);
   
-  useEffect(() => {
-    localStorage.setItem('mosaic.startOnLogin', JSON.stringify(startOnLogin));
-  }, [startOnLogin]);
-
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
         const activeElement = document.activeElement;
@@ -3691,7 +3708,7 @@ useEffect(() => {
         definitions={customFieldDefinitions}
         onUpdateDefinitions={setCustomFieldDefinitions}
         startOnLogin={startOnLogin}
-        onSetStartOnLogin={setStartOnLogin}
+        onSetStartOnLogin={handleSetStartOnLogin}
       />
       <ElementCustomizerModal
         isOpen={isElementCustomizerOpen}

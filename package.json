@@ -1,21 +1,45 @@
+
 {
-  "name": "mosaicboard-v1-packaging",
-  "private": true,
-  "version": "0.0.0",
-  "type": "module",
+  "name": "mosaic-board",
+  "version": "1.1.0",
+  "description": "A Trello-like application for managing tasks and projects with lists and draggable cards.",
+  "main": "electron/main.js",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "dev": "cross-env ELECTRON_DEV=1 vite",
+    "dev:electron": "cross-env ELECTRON_DEV=1 electron .",
+    "build:renderer": "vite build",
+    "dist": "npm run build:renderer && electron-builder -w --publish never"
   },
   "dependencies": {
     "react": "^19.1.1",
-    "react-dom": "^19.1.1",
-    "@material/material-color-utilities": "0.2.7"
+    "react-dom": "^19.1.1"
   },
   "devDependencies": {
-    "@types/node": "^22.14.0",
-    "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "cross-env": "^7.0.3",
+    "electron": "^31.2.1",
+    "electron-builder": "^24.13.3",
+    "typescript": "^5.5.3",
+    "vite": "^5.3.3"
+  },
+  "build": {
+    "appId": "com.mosaicboard.app",
+    "productName": "MosaicBoard",
+    "files": [
+      "dist/renderer/**/*",
+      "electron/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "artifactName": "MosaicBoard-${version}-Setup.${ext}"
+    }
   }
 }
