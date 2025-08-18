@@ -1,5 +1,0 @@
-- **Persistence**: All theme settings must be saved to the user's local storage under the key `mosaic.theme`. Changes must persist immediately.
-- **Validation**: When importing a theme file, all fields must be validated. Unknown fields are ignored. Out-of-range numeric values (radius, fontScale) must be clamped to the nearest valid value. Invalid colors should fallback gracefully without crashing.
-- **Real-Time Updates**: Theme changes must apply instantly across the entire application without requiring a page reload.
-- **System Mode**: When `mode` is set to `system`, the application must listen for OS-level theme changes and update in real-time.
-- **Accessibility**: The `reducedMotion` setting must effectively disable or minimize non-essential animations and transitions.

@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
 
@@ -2239,30 +2240,6 @@ const SettingsModal = ({ isOpen, onClose, onClearData, theme, updateTheme, reset
     const [licenses, setLicenses] = useState(DEFAULT_LICENSES);
     const [licenseSearch, setLicenseSearch] = useState('');
 
-    useEffect(() => {
-        if (!isOpen) return;
-
-        const fetchLicenses = async () => {
-            try {
-                const response = await fetch('licenses.json');
-                if (!response.ok) {
-                    throw new Error('File not found in app resources.');
-                }
-                const data = await response.json();
-                if (Array.isArray(data) && data.length > 0) {
-                    setLicenses(data);
-                } else {
-                    throw new Error('Invalid license data format.');
-                }
-            } catch (error) {
-                console.warn(`Could not load licenses.json: ${error.message}. Using default license information.`);
-                setLicenses(DEFAULT_LICENSES);
-            }
-        };
-
-        fetchLicenses();
-    }, [isOpen]);
-
     const handleExportLicenses = useCallback(() => {
         const jsonString = JSON.stringify(licenses, null, 2);
         const blob = new Blob([jsonString], { type: 'application/json' });
@@ -2573,9 +2550,6 @@ const SettingsModal = ({ isOpen, onClose, onClearData, theme, updateTheme, reset
                                     <button className="sidebar-btn" onClick={handleExportLicenses}>
                                         <Icon name="file_download" size={20}/>Export Licenses as JSON
                                     </button>
-                                    <a href="THIRD_PARTY_LICENSES.txt" target="_blank" rel="noopener noreferrer" className="sidebar-btn">
-                                      <Icon name="article" size={20}/>View Raw Licenses (TXT)
-                                    </a>
                                 </div>
                             </div>
                         )}
