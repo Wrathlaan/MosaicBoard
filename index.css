@@ -40,7 +40,7 @@
 
 [data-theme='dark'] {
   /* Dark Theme Palette */
-  --color-on-primary: #003257;
+  --color-on-primary: #FFFFFF;
   --color-primary-container: #00497B;
   --color-on-primary-container: #DDECFF;
   --color-tertiary-container: #C9B838;
@@ -270,7 +270,16 @@ input[readOnly], textarea[readOnly] {
 .developer-credit {
     font-size: 0.8rem;
     color: var(--color-on-surface-variant);
-    padding: 10px 12px;
+    padding: 10px 12px 4px 12px;
+    line-height: 1.4;
+}
+
+.app-version {
+    font-size: 0.8rem;
+    color: var(--color-on-surface-variant);
+    padding: 0 12px 10px 12px;
+    line-height: 1.4;
+    opacity: 0.8;
 }
 
 .settings-content {
@@ -788,6 +797,12 @@ header h1 {
   overflow-x: auto;
   height: 100%;
   gap: 20px;
+  cursor: grab;
+}
+
+.board.is-panning {
+    cursor: grabbing;
+    user-select: none;
 }
 
 .view-container {
@@ -992,6 +1007,10 @@ header h1 {
   font-weight: 500;
 }
 
+.add-list-btn {
+  justify-content: center;
+}
+
 .add-card-btn {
     width: calc(100% - (var(--density-card-gap) * 2));
     margin: 0 var(--density-card-gap) var(--density-card-gap);
@@ -1026,7 +1045,9 @@ header h1 {
 }
 
 .add-form.add-list-form {
-  padding: 4px;
+  padding: 8px;
+  background-color: var(--color-surface-container);
+  border-radius: var(--radius);
 }
 
 .add-form.add-list-form .add-input {

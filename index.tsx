@@ -14,7 +14,7 @@ interface Theme {
 }
 
 const DEFAULT_THEME: Theme = {
-    mode: 'system',
+    mode: 'dark',
     sourceColor: '#0079BF', // Calm Blue
     radius: 10,
     density: 'comfortable',
@@ -647,7 +647,7 @@ const Card = ({ card, isHidden, canEdit, onDragStart, onDragEnd, onClick, availa
   const hasImageCover = !!cover.imageUrl;
   const hasColorCover = !!cover.color;
   const showCover = hasImageCover || hasColorCover;
-  const isFullCover = hasImageCover && cover.size === 'full';
+  const isFullCover = hasImageCover && cover.size !== 'normal';
 
   return (
     <div
@@ -1056,7 +1056,7 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
         reader.onload = (event) => {
             const imageUrl = event.target?.result as string;
             if (imageUrl) {
-                 handleSetCover({ ...card.cover, imageUrl, size: card.cover.size || 'full' });
+                 handleSetCover({ ...card.cover, imageUrl, size: 'full' });
             }
         };
         reader.readAsDataURL(file);
@@ -1471,11 +1471,11 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
                                               <p>Size</p>
                                               <div className="segmented-control cover-size-control">
                                                   <label>
-                                                      <input type="radio" name="cover-size" checked={!card.cover.size || card.cover.size === 'normal'} onChange={() => updateCard({ cover: { ...card.cover, size: 'normal' }})} />
+                                                      <input type="radio" name="cover-size" checked={card.cover.size === 'normal'} onChange={() => updateCard({ cover: { ...card.cover, size: 'normal' }})} />
                                                       <span>Normal</span>
                                                   </label>
                                                   <label>
-                                                      <input type="radio" name="cover-size" checked={card.cover.size === 'full'} onChange={() => updateCard({ cover: { ...card.cover, size: 'full' }})} />
+                                                      <input type="radio" name="cover-size" checked={card.cover.size !== 'normal'} onChange={() => updateCard({ cover: { ...card.cover, size: 'full' }})} />
                                                       <span>Full</span>
                                                   </label>
                                               </div>
@@ -1493,7 +1493,7 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
                                       <button className="action-button full-width" onClick={() => coverFileInputRef.current?.click()}>Upload a cover image</button>
                                       <input type="file" ref={coverFileInputRef} onChange={handleCoverImageUpload} style={{display: 'none'}} accept="image/*"/>
                                       <hr/>
-                                      <AddItemForm placeholder="Paste image URL..." buttonText="Set" onSubmit={(url) => handleSetCover({ ...card.cover, imageUrl: url, size: card.cover.size || 'full' })} onCancel={() => {}} />
+                                      <AddItemForm placeholder="Paste image URL..." buttonText="Set" onSubmit={(url) => handleSetCover({ ...card.cover, imageUrl: url, size: 'full' })} onCancel={() => {}} />
                                       <hr/>
                                       <button className="sidebar-btn delete full-width" onClick={() => handleSetCover({})}>Remove Cover</button>
                                   </Popover>
@@ -2213,15 +2213,67 @@ const AppearanceSettings = ({ theme, updateTheme, resetTheme, exportTheme, impor
     );
 };
 
-const SettingsModal = ({ isOpen, onClose, onClearData, theme, updateTheme, resetTheme, exportTheme, importTheme, onOpenElementCustomizer, onExportJson, onExportCsv, onImportJson, isDevMode, onToggleDevMode, members, allUsers, boardMembers, onInvite, onUpdateRole, onRemoveMember, permissions, definitions, onUpdateDefinitions }) => {
+const DEFAULT_LICENSES = [
+    { name: 'React & React DOM', version: '19.1.1', license: 'MIT License', url: 'https://github.com/facebook/react/blob/main/LICENSE' },
+    { name: 'Geist Sans & Mono Fonts', version: '1.3.0', license: 'SIL Open Font License 1.1', url: 'https://github.com/vercel/geist-font/blob/main/LICENSE' },
+];
+
+const SettingsModal = ({ isOpen, onClose, onClearData, theme, updateTheme, resetTheme, exportTheme, importTheme, onOpenElementCustomizer, onExportJson, onExportCsv, onImportJson, isDevMode, onToggleDevMode, members, allUsers, boardMembers, onInvite, onUpdateRole, onRemoveMember, permissions, definitions, onUpdateDefinitions, startOnLogin, onSetStartOnLogin }) => {
     if (!isOpen) return null;
     const [activeTab, setActiveTab] = useState('appearance');
     const boardImportInputRef = useRef<HTMLInputElement>(null);
+    const isDesktopMode = (window as any).DESKTOP_MODE === true;
+    const [licenses, setLicenses] = useState(DEFAULT_LICENSES);
+    const [licenseSearch, setLicenseSearch] = useState('');
 
-    const licenses = [
-        { name: 'React & React DOM', license: 'MIT License', url: 'https://github.com/facebook/react/blob/main/LICENSE' },
-        { name: 'Geist Sans & Mono Fonts', license: 'SIL Open Font License 1.1', url: 'https://github.com/vercel/geist-font/blob/main/LICENSE' },
-    ];
+    useEffect(() => {
+        if (!isOpen) return;
+
+        const fetchLicenses = async () => {
+            try {
+                const response = await fetch('licenses.json');
+                if (!response.ok) {
+                    throw new Error('File not found in app resources.');
+                }
+                const data = await response.json();
+                if (Array.isArray(data) && data.length > 0) {
+                    setLicenses(data);
+                } else {
+                    throw new Error('Invalid license data format.');
+                }
+            } catch (error) {
+                console.warn(`Could not load licenses.json: ${error.message}. Using default license information.`);
+                setLicenses(DEFAULT_LICENSES);
+            }
+        };
+
+        fetchLicenses();
+    }, [isOpen]);
+
+    const handleExportLicenses = useCallback(() => {
+        const jsonString = JSON.stringify(licenses, null, 2);
+        const blob = new Blob([jsonString], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `mosaic-board-licenses.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }, [licenses]);
+    
+    const filteredLicenses = useMemo(() => {
+        if (!licenseSearch.trim()) {
+            return licenses;
+        }
+        const query = licenseSearch.toLowerCase().trim();
+        return licenses.filter(lib =>
+            lib.name.toLowerCase().includes(query) ||
+            lib.license.toLowerCase().includes(query) ||
+            lib.version.toLowerCase().includes(query)
+        );
+    }, [licenses, licenseSearch]);
 
     const handleClearData = () => {
         if (window.confirm('Are you sure you want to delete all board data? This action cannot be undone.')) {
@@ -2291,11 +2343,14 @@ const SettingsModal = ({ isOpen, onClose, onClearData, theme, updateTheme, reset
                              <button onClick={() => setActiveTab('members')} className={activeTab === 'members' ? 'active' : ''}><Icon name="group" size={20} /> Members</button>
                              <button onClick={() => setActiveTab('fields')} className={activeTab === 'fields' ? 'active' : ''}><Icon name="data_object" size={20} /> Fields</button>
                              <button onClick={() => setActiveTab('general')} className={activeTab === 'general' ? 'active' : ''}><Icon name="tune" size={20} /> General</button>
-                             <button onClick={() => setActiveTab('api')} className={activeTab === 'api' ? 'active' : ''}><Icon name="api" size={20} /> API</button>
+                             {!isDesktopMode && <button onClick={() => setActiveTab('api')} className={activeTab === 'api' ? 'active' : ''}><Icon name="api" size={20} /> API</button>}
                              <button onClick={() => setActiveTab('licenses')} className={activeTab === 'licenses' ? 'active' : ''}><Icon name="description" size={20} /> Licenses</button>
                              <button onClick={() => setActiveTab('dev')} className={activeTab === 'dev' ? 'active' : ''}><Icon name="code" size={20} /> Dev</button>
                         </div>
-                        <div className="developer-credit">Developed by Alan Warrick</div>
+                        <div>
+                            <div className="developer-credit">Developed By:<br/>Alan Warrick</div>
+                            <div className="app-version">Version: {(window as any).APP_VERSION || 'Dev Build'}</div>
+                        </div>
                     </div>
                     <div className="settings-content">
                         {activeTab === 'appearance' && (
@@ -2412,6 +2467,21 @@ const SettingsModal = ({ isOpen, onClose, onClearData, theme, updateTheme, reset
                                     </div>
                                 </div>
 
+                                {isDesktopMode && (
+                                    <div className="setting-item" style={{marginTop: '16px'}}>
+                                        <h5>Application Behavior</h5>
+                                        <label className="toggle-control">
+                                            <input
+                                                type="checkbox"
+                                                checked={startOnLogin}
+                                                onChange={e => onSetStartOnLogin(e.target.checked)}
+                                            />
+                                            <span>Start on Login</span>
+                                        </label>
+                                        <p>Automatically start MosaicBoard when you log into your computer.</p>
+                                    </div>
+                                )}
+
                                 <div className="setting-item" style={{marginTop: '16px'}}>
                                     <h5>Danger Zone</h5>
                                     <p>This will permanently delete all lists, cards, and settings from your browser's local storage.</p>
@@ -2419,7 +2489,7 @@ const SettingsModal = ({ isOpen, onClose, onClearData, theme, updateTheme, reset
                                 </div>
                             </div>
                         )}
-                         {activeTab === 'api' && (
+                         {!isDesktopMode && activeTab === 'api' && (
                             <div>
                                 <h4>API Integrations</h4>
                                 <div className="setting-item">
@@ -2465,17 +2535,35 @@ const SettingsModal = ({ isOpen, onClose, onClearData, theme, updateTheme, reset
                         )}
                         {activeTab === 'licenses' && (
                             <div>
-                                <h4>Third-Party Licenses</h4>
+                                <h4>About & Licenses</h4>
                                 <p>MosaicBoard is built using fantastic open-source software. We are grateful to the developers of these projects.</p>
+                                <input
+                                    type="text"
+                                    className="popover-input"
+                                    placeholder="Filter by name, version, or license..."
+                                    value={licenseSearch}
+                                    onChange={e => setLicenseSearch(e.target.value)}
+                                    style={{ width: '100%', marginBottom: '16px' }}
+                                    aria-label="Filter licenses"
+                                />
                                 <ul className="license-list">
-                                    {licenses.map(lib => (
+                                    {filteredLicenses.map(lib => (
                                         <li key={lib.name} className="license-item">
-                                            <strong>{lib.name}</strong>
+                                            <strong>{lib.name} (v{lib.version})</strong>
                                             <span> - </span>
                                             <a href={lib.url} target="_blank" rel="noopener noreferrer">{lib.license}</a>
                                         </li>
                                     ))}
                                 </ul>
+                                {filteredLicenses.length === 0 && <p>No licenses found matching your filter.</p>}
+                                <div className="theme-actions" style={{ marginTop: '16px' }}>
+                                    <button className="sidebar-btn" onClick={handleExportLicenses}>
+                                        <Icon name="file_download" size={20}/>Export Licenses as JSON
+                                    </button>
+                                    <a href="THIRD_PARTY_LICENSES.txt" target="_blank" rel="noopener noreferrer" className="sidebar-btn">
+                                      <Icon name="article" size={20}/>View Raw Licenses (TXT)
+                                    </a>
+                                </div>
                             </div>
                         )}
                     </div>
@@ -2638,7 +2726,7 @@ const App = () => {
                             items: (cl.items || []).map(item => ({...item, attachments: item.attachments || []}))
                         })),
                         attachments: card.attachments || [],
-                        cover: card.cover || { size: 'normal' },
+                        cover: card.cover || {},
                         subscribers: card.subscribers || [],
                         comments: (card.comments || []).map(c => ({...c, attachments: c.attachments || []})),
                         customFields: card.customFields || {},
@@ -2807,6 +2895,16 @@ const App = () => {
     }
     return 4;
   });
+
+  const [startOnLogin, setStartOnLogin] = useState<boolean>(() => {
+    try {
+        const saved = localStorage.getItem('mosaic.startOnLogin');
+        return saved ? JSON.parse(saved) : false;
+    } catch (e) {
+        console.error("Failed to parse startOnLogin from localStorage", e);
+        return false;
+    }
+  });
   
   const availableMembers = useMemo(() => {
     const memberIds = boardMembers.map(bm => bm.userId);
@@ -2847,6 +2945,10 @@ const App = () => {
     localStorage.setItem('mosaic-custom-fields', JSON.stringify(customFieldDefinitions));
   }, [customFieldDefinitions]);
   
+  useEffect(() => {
+    localStorage.setItem('mosaic.startOnLogin', JSON.stringify(startOnLogin));
+  }, [startOnLogin]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
         const activeElement = document.activeElement;
@@ -2912,6 +3014,71 @@ useEffect(() => {
     }, 60 * 1000);
     return () => clearInterval(interval);
 }, [automations.scheduled, boardData]);
+
+useEffect(() => {
+    if (view !== 'Board') return;
+
+    const board = document.querySelector('.board') as HTMLElement;
+    if (!board) return;
+
+    // --- Mouse Wheel Horizontal Scrolling ---
+    const handleWheel = (e: WheelEvent) => {
+        if (e.deltaY === 0) return;
+        e.preventDefault();
+        board.scrollLeft += e.deltaY;
+    };
+
+    board.addEventListener('wheel', handleWheel);
+
+    // --- Click-and-Drag Panning ---
+    let isDown = false;
+    let startX: number;
+    let scrollLeft: number;
+
+    const handleMouseDown = (e: MouseEvent) => {
+        const target = e.target as HTMLElement;
+        // Only pan when clicking on the board background, not on lists/cards or their children.
+        if (target.closest('.list-container')) return;
+        
+        isDown = true;
+        board.classList.add('is-panning');
+        startX = e.pageX - board.offsetLeft;
+        scrollLeft = board.scrollLeft;
+    };
+
+    const handleMouseLeave = () => {
+        isDown = false;
+        board.classList.remove('is-panning');
+    };
+
+    const handleMouseUp = () => {
+        isDown = false;
+        board.classList.remove('is-panning');
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+        if (!isDown) return;
+        e.preventDefault();
+        const x = e.pageX - board.offsetLeft;
+        const walk = (x - startX);
+        board.scrollLeft = scrollLeft - walk;
+    };
+
+    board.addEventListener('mousedown', handleMouseDown);
+    board.addEventListener('mouseleave', handleMouseLeave);
+    board.addEventListener('mouseup', handleMouseUp);
+    board.addEventListener('mousemove', handleMouseMove);
+
+    // Cleanup function
+    return () => {
+        board.removeEventListener('wheel', handleWheel);
+        board.removeEventListener('mousedown', handleMouseDown);
+        board.removeEventListener('mouseleave', handleMouseLeave);
+        board.removeEventListener('mouseup', handleMouseUp);
+        board.removeEventListener('mousemove', handleMouseMove);
+        board.classList.remove('is-panning');
+    };
+}, [view]);
 
 useEffect(() => {
     if (!isDevMode) {
@@ -3435,30 +3602,29 @@ useEffect(() => {
             </div>
         </div>
         <div className="header-right">
+            <button className="header-btn" onClick={() => setAutomationModalOpen(true)}><Icon name="bolt" size={20}/> Automation</button>
             <div className="popover-wrapper">
-                <button className="filter-button" onClick={() => setFilterPopoverOpen(o => !o)}>
-                    <Icon name="filter_list" size={20}/>
-                    <span>Filter</span>
+                <button className={`filter-button ${isFiltersActive ? 'active' : ''}`} onClick={() => setFilterPopoverOpen(p => !p)}>
+                    <Icon name="filter_list" size={20}/> <span>Filter</span>
                     {isFiltersActive && <span className="filter-active-indicator" />}
                 </button>
                 {isFilterPopoverOpen && (
                     <FilterPopover 
-                        filters={filters}
-                        onFiltersChange={setFilters}
+                        filters={filters} 
+                        onFiltersChange={setFilters} 
                         onClose={() => setFilterPopoverOpen(false)}
                         availableLabels={availableLabels}
                         availableMembers={availableMembers}
                     />
                 )}
             </div>
-            {permissions.canManageSettings && <button className="header-btn icon-only" onClick={() => setAutomationModalOpen(true)} aria-label="Automation"><Icon name="smart_toy" /></button>}
             <div className="popover-wrapper">
-                <button className="header-btn icon-only" onClick={() => setNotificationsOpen(o => !o)} aria-label="Notifications">
+                <button className="header-btn icon-only" onClick={() => setNotificationsOpen(p => !p)}>
                     <Icon name="notifications" />
-                    {unreadNotificationsCount > 0 && <span className="notification-badge">{unreadNotificationsCount}</span>}
+                     {unreadNotificationsCount > 0 && <span className="filter-active-indicator" />}
                 </button>
-                {isNotificationsOpen && (
-                    <NotificationsPopover
+                 {isNotificationsOpen && (
+                    <NotificationsPopover 
                         notifications={notifications}
                         onNotificationClick={handleNotificationClick}
                         onMarkAllRead={markAllNotificationsRead}
@@ -3466,31 +3632,29 @@ useEffect(() => {
                     />
                 )}
             </div>
-             <div className="user-profile">
-                <img src={currentUser.avatarUrl} alt={currentUser.name} className="member-avatar" />
-             </div>
-             <button className="header-btn icon-only" onClick={() => setSettingsModalOpen(true)} aria-label="Settings"><Icon name="settings"/></button>
+             <button className="header-btn icon-only" onClick={() => setSettingsModalOpen(true)} aria-label="Settings"><Icon name="settings" /></button>
         </div>
       </header>
       <main className={`main-container view-${view.toLowerCase()}`}>
-        {renderView()}
+          {renderView()}
       </main>
-      {selectedCard && currentCard && (
-        <CardModal 
-            card={currentCard}
-            listTitle={boardData[selectedCard.listIndex].title}
-            onClose={handleCloseModal}
-            onUpdateCard={(updates) => handleUpdateCard(selectedCard.listIndex, selectedCard.cardIndex, updates)}
-            onAddComment={(commentText, attachments) => handleAddComment(selectedCard.listIndex, selectedCard.cardIndex, commentText, attachments)}
-            onDeleteCard={() => handleDeleteCard(selectedCard.listIndex, selectedCard.cardIndex)}
-            availableLabels={availableLabels}
-            availableMembers={availableMembers}
-            currentUser={currentUser}
-            permissions={permissions}
-            customButtons={automations.cardButtons}
-            executeCustomButton={(button, cardId) => executeAutomationAction(button.action, cardId)}
-            customFieldDefinitions={customFieldDefinitions}
-            boardData={boardData}
+      
+      {selectedCard && (
+        <CardModal
+          card={boardData[selectedCard.listIndex].cards[selectedCard.cardIndex]}
+          listTitle={boardData[selectedCard.listIndex].title}
+          onClose={handleCloseModal}
+          onUpdateCard={(updates) => handleUpdateCard(selectedCard.listIndex, selectedCard.cardIndex, updates)}
+          onAddComment={(text, attachments) => handleAddComment(selectedCard.listIndex, selectedCard.cardIndex, text, attachments)}
+          onDeleteCard={() => handleDeleteCard(selectedCard.listIndex, selectedCard.cardIndex)}
+          availableLabels={availableLabels}
+          availableMembers={availableMembers}
+          currentUser={currentUser}
+          permissions={permissions}
+          customButtons={automations.cardButtons}
+          executeCustomButton={executeAutomationAction}
+          customFieldDefinitions={customFieldDefinitions}
+          boardData={boardData}
         />
       )}
       <AutomationModal
@@ -3502,38 +3666,49 @@ useEffect(() => {
         availableLabels={availableLabels}
         availableMembers={availableMembers}
       />
-      <SettingsModal
+       <SettingsModal
         isOpen={isSettingsModalOpen}
         onClose={() => setSettingsModalOpen(false)}
         onClearData={handleClearData}
+        theme={themeManager.theme}
+        updateTheme={themeManager.updateTheme}
+        resetTheme={themeManager.resetTheme}
+        exportTheme={themeManager.exportTheme}
+        importTheme={themeManager.importTheme}
         onOpenElementCustomizer={() => setElementCustomizerOpen(true)}
         onExportJson={handleExportJson}
         onExportCsv={handleExportCsv}
         onImportJson={handleImportJson}
         isDevMode={isDevMode}
         onToggleDevMode={() => setIsDevMode(p => !p)}
-        members={availableMembers} 
+        members={availableMembers}
         allUsers={allUsers}
         boardMembers={boardMembers}
-        onInvite={handleInviteUser} 
+        onInvite={handleInviteUser}
         onUpdateRole={handleUpdateRole}
         onRemoveMember={handleRemoveMember}
         permissions={permissions}
         definitions={customFieldDefinitions}
         onUpdateDefinitions={setCustomFieldDefinitions}
-        {...themeManager}
+        startOnLogin={startOnLogin}
+        onSetStartOnLogin={setStartOnLogin}
       />
-       <ElementCustomizerModal
+      <ElementCustomizerModal
         isOpen={isElementCustomizerOpen}
         onClose={() => setElementCustomizerOpen(false)}
         originalCss={themeManager.customCss}
         onSave={themeManager.updateCustomCss}
       />
-      <DevTooltip visible={devTooltip.visible} content={devTooltip.content} x={devTooltip.x} y={devTooltip.y} />
+      <DevTooltip 
+        visible={devTooltip.visible}
+        content={devTooltip.content}
+        x={devTooltip.x}
+        y={devTooltip.y}
+      />
     </>
   );
 };
 
 const container = document.getElementById('root');
-const root = createRoot(container!);
+const root = createRoot(container);
 root.render(<App />);
