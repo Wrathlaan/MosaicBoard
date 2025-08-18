@@ -1,13 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
-import {
-  argbFromHex,
-  themeFromSourceColor,
-  applyTheme,
-  sourceColorFromImage,
-  Theme as M3Theme,
-  hexFromArgb
-} from "@material/material-color-utilities";
 
 // --- THEME ---
 interface Theme {
@@ -57,10 +49,6 @@ const useTheme = () => {
         }
     });
 
-    const m3Theme = useMemo(() => {
-        return themeFromSourceColor(argbFromHex(theme.sourceColor));
-    }, [theme.sourceColor]);
-    
     const updateTheme = useCallback((updates: Partial<Theme>) => {
         setTheme(prev => ({ ...prev, ...updates }));
     }, []);
@@ -120,8 +108,6 @@ const useTheme = () => {
         const effectiveMode = theme.mode === 'system'
             ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
             : theme.mode;
-        
-        applyTheme(m3Theme, { target: docEl, dark: effectiveMode === 'dark' });
 
         docEl.setAttribute('data-theme', effectiveMode);
         docEl.setAttribute('data-density', theme.density);
@@ -130,6 +116,7 @@ const useTheme = () => {
         docEl.setAttribute('data-board-width', theme.boardWidth);
         
         docEl.style.setProperty('--radius', `${theme.radius}px`);
+        docEl.style.setProperty('--color-primary', theme.sourceColor);
         docEl.style.fontSize = `${16.5 * theme.fontScale}px`;
         
         const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -141,7 +128,7 @@ const useTheme = () => {
              docEl.setAttribute('data-reduced-motion', 'false');
         }
 
-    }, [theme, m3Theme]);
+    }, [theme]);
 
     useEffect(() => {
         localStorage.setItem('mosaic.customCss', JSON.stringify(customCss));
@@ -165,14 +152,13 @@ const useTheme = () => {
         const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
         const handleChange = (e: MediaQueryListEvent) => {
             if (theme.mode === 'system') {
-                applyTheme(m3Theme, { target: document.documentElement, dark: e.matches });
                 document.documentElement.setAttribute('data-theme', e.matches ? 'dark' : 'light');
             }
         };
 
         mediaQuery.addEventListener('change', handleChange);
         return () => mediaQuery.removeEventListener('change', handleChange);
-    }, [theme.mode, m3Theme]);
+    }, [theme.mode]);
 
     return { theme, updateTheme, resetTheme, exportTheme, importTheme, customCss, updateCustomCss };
 };
@@ -183,6 +169,22 @@ interface LabelData {
   id: string;
   text: string;
   color: string;
+}
+
+// --- New Auth & Role Data Types ---
+type Role = 'owner' | 'admin' | 'member' | 'viewer';
+
+interface UserData {
+  id: string;
+  name: string;
+  email: string;
+  passwordHash: string; // In a real app, this would be a secure hash
+  avatarUrl?: string;
+}
+
+interface BoardMember {
+    userId: string;
+    role: Role;
 }
 
 interface MemberData {
@@ -333,10 +335,16 @@ const AVAILABLE_LABELS_DATA: LabelData[] = [
     { id: 'label-5', text: 'Research', color: '#FF9F1A' },
 ];
 
-const AVAILABLE_MEMBERS_DATA: MemberData[] = [
-    { id: 'member-1', name: 'Alice', avatarUrl: `https://i.pravatar.cc/150?u=member-1` },
-    { id: 'member-2', name: 'Bob', avatarUrl: `https://i.pravatar.cc/150?u=member-2` },
-    { id: 'member-3', name: 'Charlie', avatarUrl: `https://i.pravatar.cc/150?u=member-3` },
+const INITIAL_USERS: UserData[] = [
+    { id: 'user-1', name: 'Alice', email: 'alice@example.com', passwordHash: 'password', avatarUrl: `https://i.pravatar.cc/150?u=user-1` },
+    { id: 'user-2', name: 'Bob', email: 'bob@example.com', passwordHash: 'password', avatarUrl: `https://i.pravatar.cc/150?u=user-2` },
+    { id: 'user-3', name: 'Charlie', email: 'charlie@example.com', passwordHash: 'password', avatarUrl: `https://i.pravatar.cc/150?u=user-3` },
+];
+
+const INITIAL_BOARD_MEMBERS: BoardMember[] = [
+    { userId: 'user-1', role: 'owner' },
+    { userId: 'user-2', role: 'admin' },
+    { userId: 'user-3', role: 'member' },
 ];
 
 
@@ -427,11 +435,30 @@ const getSanitizedBoardDataForStorage = (data: ListData[]): ListData[] => {
     }));
 };
 
+// --- Permissions Hook ---
+const usePermissions = (user: UserData | null, members: BoardMember[]) => {
+    const role = members.find(m => m.userId === user?.id)?.role;
+    return useMemo(() => ({
+        role,
+        isOwner: role === 'owner',
+        isAdmin: role === 'owner' || role === 'admin',
+        isMember: role === 'owner' || role === 'admin' || role === 'member',
+        isViewer: role === 'viewer',
+        canEditBoard: role === 'owner' || role === 'admin' || role === 'member',
+        canEditCard: role === 'owner' || role === 'admin' || role === 'member',
+        canDeleteCard: role === 'owner' || role === 'admin' || role === 'member',
+        canComment: role === 'owner' || role === 'admin' || role === 'member',
+        canManageSettings: role === 'owner' || role === 'admin',
+        canManageMembers: role === 'owner' || role === 'admin',
+    }), [user, members, role]);
+};
+
 
 // --- Prop Types ---
 interface CardProps {
   card: CardData;
   isHidden: boolean;
+  canEdit: boolean;
   onDragStart: (e: React.DragEvent) => void;
   onDragEnd: (e: React.DragEvent) => void;
   onClick: () => void;
@@ -440,12 +467,14 @@ interface CardProps {
 interface ListProps {
   list: ListData;
   listIndex: number;
+  permissions: ReturnType<typeof usePermissions>;
   visibilityMap: { [cardId: string]: boolean };
   onUpdateListTitle: (listIndex: number, newTitle: string) => void;
   onDeleteList: (listIndex: number) => void;
   onAddCard: (listIndex: number, text: string) => void;
   onCardClick: (listIndex: number, cardIndex: number) => void;
   moveCard: (sourceListIndex: number, sourceCardIndex: number, destListIndex: number, destCardIndex: number) => void;
+  lastMovedCard: {id: string, direction: 'left' | 'right'} | null;
 }
 
 
@@ -606,7 +635,7 @@ const FilterPopover = ({ filters, onFiltersChange, onClose, availableLabels, ava
 /**
  * Card Component
  */
-const Card = ({ card, isHidden, onDragStart, onDragEnd, onClick, availableLabels, availableMembers }: CardProps & { availableLabels: LabelData[], availableMembers: MemberData[] }) => {
+const Card = ({ card, isHidden, canEdit, onDragStart, onDragEnd, onClick, availableLabels, availableMembers, animationClass = '' }: CardProps & { availableLabels: LabelData[], availableMembers: MemberData[], animationClass?: string }) => {
   const { cover, text, labels, dueDate, checklists, attachments, members, comments } = card;
   const checklistStats = checklists.reduce((acc, c) => {
       acc.total += c.items.length;
@@ -616,18 +645,22 @@ const Card = ({ card, isHidden, onDragStart, onDragEnd, onClick, availableLabels
   const dueDateStatus = getDueDateStatus(dueDate);
   
   const hasImageCover = !!cover.imageUrl;
+  const hasColorCover = !!cover.color;
+  const showCover = hasImageCover || hasColorCover;
+  const isFullCover = hasImageCover && cover.size === 'full';
 
   return (
     <div
-      className={`card ${isHidden ? 'is-hidden' : ''} ${hasImageCover ? 'has-image-cover' : ''}`}
-      draggable="true"
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
+      className={`card ${isHidden ? 'is-hidden' : ''} ${showCover ? 'has-cover' : ''} ${hasImageCover ? 'has-image-cover' : ''} ${isFullCover ? 'is-full-cover' : ''} ${animationClass}`}
+      draggable={canEdit}
+      onDragStart={canEdit ? onDragStart : undefined}
+      onDragEnd={canEdit ? onDragEnd : undefined}
       onClick={onClick}
     >
       {hasImageCover && <img src={cover.imageUrl} className="card-cover-image" alt="" />}
-      {!hasImageCover && cover.color && <div className="card-cover-color" style={{ backgroundColor: cover.color }} />}
-      
+      {hasColorCover && <div className="card-cover-color" style={{ backgroundColor: cover.color }} />}
+      {hasImageCover && hasColorCover && <div className="card-cover-overlay" style={{ backgroundColor: cover.color }} />}
+
       <div className="card-content-wrapper">
         <div className="card-content-main">
             {labels.length > 0 && (
@@ -708,14 +741,14 @@ const AddItemForm = ({ placeholder, buttonText, onSubmit, onCancel }) => {
   );
 };
 
-const Checklist = ({ checklist, onUpdate }) => {
+const Checklist = ({ checklist, onUpdate, canEdit }) => {
     const [newItemText, setNewItemText] = useState('');
     const [attachingToItemId, setAttachingToItemId] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const progress = checklist.items.length > 0 ? (checklist.items.filter(i => i.completed).length / checklist.items.length) * 100 : 0;
 
     const handleAddItem = () => {
-        if (newItemText.trim()) {
+        if (newItemText.trim() && canEdit) {
             const newItem: ChecklistItemData = { id: generateId(), text: newItemText, completed: false, attachments: [] };
             onUpdate({ ...checklist, items: [...checklist.items, newItem] });
             setNewItemText('');
@@ -723,6 +756,7 @@ const Checklist = ({ checklist, onUpdate }) => {
     };
     
     const handleToggleItem = (itemId: string) => {
+      if (!canEdit) return;
         const newItems = checklist.items.map(item =>
             item.id === itemId ? { ...item, completed: !item.completed } : item
         );
@@ -730,13 +764,14 @@ const Checklist = ({ checklist, onUpdate }) => {
     };
 
     const handleAttachClick = (itemId: string) => {
+        if (!canEdit) return;
         setAttachingToItemId(itemId);
         fileInputRef.current?.click();
     };
 
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
-        if (file && attachingToItemId) {
+        if (file && attachingToItemId && canEdit) {
             const newAttachment = await fileToAttachment(file);
             const newItems = checklist.items.map(item => {
                 if (item.id === attachingToItemId) {
@@ -760,9 +795,9 @@ const Checklist = ({ checklist, onUpdate }) => {
                 {checklist.items.map(item => (
                     <div key={item.id} className="checklist-item-wrapper">
                         <div className="checklist-item">
-                            <input type="checkbox" checked={item.completed} onChange={() => handleToggleItem(item.id)} />
+                            <input type="checkbox" checked={item.completed} onChange={() => handleToggleItem(item.id)} disabled={!canEdit}/>
                             <span className={item.completed ? 'completed' : ''}>{item.text}</span>
-                            <button className="attach-to-item-btn" onClick={() => handleAttachClick(item.id)} aria-label="Attach file"><Icon name="attachment" size={16} /></button>
+                            <button className="attach-to-item-btn" onClick={() => handleAttachClick(item.id)} aria-label="Attach file" disabled={!canEdit}><Icon name="attachment" size={16} /></button>
                         </div>
                         {item.attachments && item.attachments.length > 0 && (
                             <div className="item-attachment-list">
@@ -787,7 +822,7 @@ const Checklist = ({ checklist, onUpdate }) => {
                     </div>
                 ))}
             </div>
-            <div className="add-checklist-item-form">
+            {canEdit && <div className="add-checklist-item-form">
                 <input
                     type="text"
                     value={newItemText}
@@ -796,7 +831,7 @@ const Checklist = ({ checklist, onUpdate }) => {
                 />
                 <button onClick={handleAddItem} disabled={!newItemText.trim()}>Add</button>
                 <input type="file" ref={fileInputRef} onChange={handleFileChange} style={{display: 'none'}} />
-            </div>
+            </div>}
         </div>
     );
 };
@@ -879,7 +914,7 @@ const CommentForm = ({ onSubmit, availableMembers }) => {
 /**
  * CardModal Component
  */
-const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDeleteCard, availableLabels, availableMembers, currentUserId, customButtons, executeCustomButton, customFieldDefinitions, boardData }) => {
+const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDeleteCard, availableLabels, availableMembers, currentUser, permissions, customButtons, executeCustomButton, customFieldDefinitions, boardData }) => {
     const [editText, setEditText] = useState(card.text);
     const [editDescription, setEditDescription] = useState(card.description);
     const [isEditingDescription, setIsEditingDescription] = useState(false);
@@ -980,21 +1015,21 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
         reader.onload = (event) => {
             const imageUrl = event.target?.result as string;
             if (imageUrl) {
-                handleSetCover({ ...card.cover, imageUrl, color: undefined });
+                 handleSetCover({ ...card.cover, imageUrl, size: card.cover.size || 'full' });
             }
         };
         reader.readAsDataURL(file);
     };
     
     const handleToggleSubscription = () => {
-      const isSubscribed = card.subscribers.includes(currentUserId);
+      const isSubscribed = card.subscribers.includes(currentUser.id);
       const newSubscribers = isSubscribed 
-        ? card.subscribers.filter(id => id !== currentUserId)
-        : [...card.subscribers, currentUserId];
+        ? card.subscribers.filter(id => id !== currentUser.id)
+        : [...card.subscribers, currentUser.id];
       updateCard({ subscribers: newSubscribers });
     }
     
-    const isSubscribed = card.subscribers.includes(currentUserId);
+    const isSubscribed = card.subscribers.includes(currentUser.id);
     
     const sortedActivity = [
         ...card.activity.map(a => ({ ...a, type: 'activity' })),
@@ -1076,17 +1111,17 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
         const value = card.customFields[field.id];
         switch (field.type) {
             case 'text':
-                return <input type="text" value={value || ''} onChange={e => handleCustomFieldChange(field.id, e.target.value)} />;
+                return <input type="text" value={value || ''} onChange={e => handleCustomFieldChange(field.id, e.target.value)} disabled={!permissions.canEditCard} />;
             case 'number':
-                return <input type="number" value={value || ''} onChange={e => handleCustomFieldChange(field.id, e.target.value)} />;
+                return <input type="number" value={value || ''} onChange={e => handleCustomFieldChange(field.id, e.target.value)} disabled={!permissions.canEditCard} />;
             case 'date':
                 const dateValue = value ? new Date(value as number).toISOString().split('T')[0] : '';
-                return <input type="date" value={dateValue} onChange={e => handleCustomFieldChange(field.id, new Date(e.target.value).getTime())} />;
+                return <input type="date" value={dateValue} onChange={e => handleCustomFieldChange(field.id, new Date(e.target.value).getTime())} disabled={!permissions.canEditCard} />;
             case 'checkbox':
-                return <input type="checkbox" checked={!!value} onChange={e => handleCustomFieldChange(field.id, e.target.checked)} />;
+                return <input type="checkbox" checked={!!value} onChange={e => handleCustomFieldChange(field.id, e.target.checked)} disabled={!permissions.canEditCard} />;
             case 'dropdown':
                 return (
-                    <select value={value || ''} onChange={e => handleCustomFieldChange(field.id, e.target.value)}>
+                    <select value={value || ''} onChange={e => handleCustomFieldChange(field.id, e.target.value)} disabled={!permissions.canEditCard}>
                         <option value="">-- Select --</option>
                         {field.options?.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                     </select>
@@ -1105,6 +1140,7 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
                         value={editText}
                         onChange={(e) => setEditText(e.target.value)}
                         onBlur={() => card.text !== editText && onUpdateCard({ text: editText })}
+                        readOnly={!permissions.canEditCard}
                     />
                     <p className="modal-subtitle">in list <strong>{listTitle}</strong> <span className="card-short-id">#{card.cardShortId}</span></p>
                 </div>
@@ -1134,7 +1170,7 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
                                     {card.dueDate.timestamp && <div>
                                         <span>Due</span>
                                         <p>
-                                            <input type="checkbox" checked={card.dueDate.completed} onChange={handleToggleDueComplete}/>
+                                            <input type="checkbox" checked={card.dueDate.completed} onChange={handleToggleDueComplete} disabled={!permissions.canEditCard}/>
                                             {new Date(card.dueDate.timestamp).toLocaleString()}
                                         </p>
                                     </div>}
@@ -1162,9 +1198,10 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
                                 value={editDescription}
                                 onFocus={() => setIsEditingDescription(true)}
                                 onChange={(e) => setEditDescription(e.target.value)}
-                                placeholder="Add a more detailed description..."
+                                placeholder={permissions.canEditCard ? "Add a more detailed description..." : "No description."}
+                                readOnly={!permissions.canEditCard}
                             />
-                            {isEditingDescription && (
+                            {isEditingDescription && permissions.canEditCard && (
                                 <div className="description-controls">
                                     <button className="action-button" onClick={handleDescriptionSave}>Save</button>
                                     <button className="sidebar-btn" onClick={() => fileInputRef.current?.click()}>Attach File</button>
@@ -1182,19 +1219,19 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
                                 {linkedCardData.map(linkedCard => (
                                     <div key={linkedCard.id} className="linked-card-item">
                                         <span>#{linkedCard.cardShortId} {linkedCard.text}</span>
-                                        <button onClick={() => handleRemoveLink(linkedCard.id)}><Icon name="close" size={16} /></button>
+                                        {permissions.canEditCard && <button onClick={() => handleRemoveLink(linkedCard.id)}><Icon name="close" size={16} /></button>}
                                     </div>
                                 ))}
                             </div>
                         </div>}
                         {card.checklists.map((checklist, index) => (
                            <div key={checklist.id} className="modal-section">
-                             <Checklist checklist={checklist} onUpdate={(updated) => handleUpdateChecklist(index, updated)} />
+                             <Checklist checklist={checklist} onUpdate={(updated) => handleUpdateChecklist(index, updated)} canEdit={permissions.canEditCard} />
                            </div>
                         ))}
                          <div className="modal-section">
                             <h3>Activity</h3>
-                            <CommentForm onSubmit={onAddComment} availableMembers={availableMembers} />
+                            {permissions.canComment && <CommentForm onSubmit={onAddComment} availableMembers={availableMembers} />}
                             <div className="activity-list">
                                 {sortedActivity.map(item => {
                                     const author = item.type === 'comment' ? availableMembers.find(m => m.id === item.authorId) : null;
@@ -1219,158 +1256,162 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
                         </div>
                     </div>
                     <div className="modal-sidebar">
-                        <h3>Add to card</h3>
-                        <div className="popover-wrapper">
-                            <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'members' ? null : 'members')}><Icon name="group" size={20}/><span>Members</span></button>
-                            {activePopover === 'members' && (
-                                <Popover onClose={() => setActivePopover(null)} trigger={null}>
-                                    <h4>Members</h4>
-                                    {availableMembers.map(member => (
-                                        <div key={member.id} className="popover-item" onClick={() => handleToggleMember(member.id)}>
-                                            <img src={member.avatarUrl} alt={member.name} className="member-avatar" />
-                                            <span>{member.name}</span>
-                                            {card.members.includes(member.id) && <Icon name="check" />}
-                                        </div>
-                                    ))}
-                                </Popover>
-                            )}
-                        </div>
-                         <div className="popover-wrapper">
-                            <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'labels' ? null : 'labels')}><Icon name="label" size={20}/><span>Labels</span></button>
-                            {activePopover === 'labels' && (
-                                <Popover onClose={() => setActivePopover(null)} trigger={null}>
-                                    <h4>Labels</h4>
-                                    {availableLabels.map(label => (
-                                        <div key={label.id} className="popover-item label-popover-item" onClick={() => handleToggleLabel(label.id)}>
-                                            <span className="modal-label" style={{ backgroundColor: label.color }}>{label.text}</span>
-                                            {card.labels.includes(label.id) && <Icon name="check" />}
-                                        </div>
-                                    ))}
-                                </Popover>
-                            )}
-                        </div>
-                        <div className="popover-wrapper">
-                            <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'checklist' ? null : 'checklist')}><Icon name="playlist_add_check" size={20}/><span>Checklist</span></button>
-                            {activePopover === 'checklist' && (
-                                <Popover onClose={() => setActivePopover(null)} trigger={null}>
-                                    <h4>Add Checklist</h4>
-                                    <AddItemForm placeholder="Checklist title..." buttonText="Add" onSubmit={handleAddChecklist} onCancel={() => setActivePopover(null)} />
-                                </Popover>
-                            )}
-                        </div>
-                        <div className="popover-wrapper">
-                            <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'dates' ? null : 'dates')}><Icon name="calendar_month" size={20}/><span>Dates</span></button>
-                            {activePopover === 'dates' && (
-                                <Popover onClose={() => setActivePopover(null)} trigger={null}>
-                                    <h4>Change Dates</h4>
-                                    <label>Start Date</label>
-                                    <input 
-                                        type="date"
-                                        className="popover-input"
-                                        onChange={(e) => handleSetStartDate(e.target.value)}
-                                        value={card.startDate ? new Date(card.startDate).toISOString().split('T')[0] : ''}
-                                    />
-                                    <label>Due Date</label>
-                                    <input 
-                                        type="date"
-                                        className="popover-input"
-                                        onChange={(e) => handleSetDueDate(e.target.value)}
-                                        value={card.dueDate.timestamp ? new Date(card.dueDate.timestamp).toISOString().split('T')[0] : ''}
-                                    />
-                                </Popover>
-                            )}
-                        </div>
-                        <div className="popover-wrapper">
-                            <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'attachment' ? null : 'attachment')}><Icon name="attachment" size={20}/><span>Attachment</span></button>
-                            {activePopover === 'attachment' && (
-                                <Popover onClose={() => setActivePopover(null)} trigger={null}>
-                                    <h4>Attach</h4>
-                                    <AddItemForm placeholder="Paste any link here..." buttonText="Attach Link" onSubmit={handleAddAttachmentLink} onCancel={() => setActivePopover(null)} />
-                                    <hr/>
-                                    <button className="action-button full-width" onClick={() => fileInputRef.current?.click()}>Upload a file</button>
-                                    <input type="file" ref={fileInputRef} onChange={handleFileUpload} style={{display: 'none'}}/>
-                                </Popover>
-                            )}
-                        </div>
-                        <div className="popover-wrapper">
-                            <button className="sidebar-btn" onClick={() => setLinkPopoverOpen(p => !p)}><Icon name="link" size={20}/><span>Link Card</span></button>
-                            {isLinkPopoverOpen && (
-                                <Popover onClose={() => setLinkPopoverOpen(false)} trigger={null}>
-                                    <h4>Link Card</h4>
-                                    <input
-                                        type="text"
-                                        className="popover-input"
-                                        placeholder="Search cards by title or #ID..."
-                                        value={linkSearchQuery}
-                                        onChange={(e) => setLinkSearchQuery(e.target.value)}
-                                        autoFocus
-                                    />
-                                    <div className="link-search-results">
-                                        {filteredCardsForLinking.map(c => (
-                                            <div key={c.id} className="popover-item" onClick={() => handleAddLink(c.id)}>
-                                                <span>#{c.cardShortId} - {c.text}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </Popover>
-                            )}
-                        </div>
-                        <div className="popover-wrapper">
-                            <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'location' ? null : 'location')}><Icon name="location_on" size={20}/><span>Location</span></button>
-                            {activePopover === 'location' && (
-                                <Popover onClose={() => setActivePopover(null)} trigger={null}>
-                                    <h4>Set Location</h4>
-                                    <AddItemForm placeholder="e.g. 123 Main St" buttonText="Set" onSubmit={handleSetLocation} onCancel={() => setActivePopover(null)} />
-                                </Popover>
-                            )}
-                        </div>
-                        <div className="popover-wrapper">
-                            <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'cover' ? null : 'cover')}><Icon name="image" size={20}/><span>Cover</span></button>
-                            {activePopover === 'cover' && (
-                                <Popover onClose={() => setActivePopover(null)} trigger={null}>
-                                    <h4>Cover</h4>
-                                     {card.cover.imageUrl && (
-                                        <>
-                                            <p>Size</p>
-                                            <div className="segmented-control cover-size-control">
-                                                <label>
-                                                    <input type="radio" name="cover-size" checked={!card.cover.size || card.cover.size === 'normal'} onChange={() => updateCard({ cover: { ...card.cover, size: 'normal' }})} />
-                                                    <span>Normal</span>
-                                                </label>
-                                                <label>
-                                                    <input type="radio" name="cover-size" checked={card.cover.size === 'full'} onChange={() => updateCard({ cover: { ...card.cover, size: 'full' }})} />
-                                                    <span>Full</span>
-                                                </label>
-                                            </div>
-                                            <hr/>
-                                        </>
-                                    )}
-                                    <p>Colors</p>
-                                    <div className="color-palette">
-                                      {['#61BD4F', '#F2D600', '#FF9F1A', '#EB5A46', '#0079BF'].map(color => (
-                                        <div key={color} className="color-swatch" style={{backgroundColor: color}} onClick={() => handleSetCover({ ...card.cover, color, imageUrl: undefined })} />
+                        {permissions.canEditCard && <>
+                          <h3>Add to card</h3>
+                          <div className="popover-wrapper">
+                              <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'members' ? null : 'members')}><Icon name="group" size={20}/><span>Members</span></button>
+                              {activePopover === 'members' && (
+                                  <Popover onClose={() => setActivePopover(null)} trigger={null}>
+                                      <h4>Members</h4>
+                                      {availableMembers.map(member => (
+                                          <div key={member.id} className="popover-item" onClick={() => handleToggleMember(member.id)}>
+                                              <img src={member.avatarUrl} alt={member.name} className="member-avatar" />
+                                              <span>{member.name}</span>
+                                              {card.members.includes(member.id) && <Icon name="check" />}
+                                          </div>
                                       ))}
-                                      <div className="color-swatch" style={{background: 'transparent', border: '1px solid #ccc'}} onClick={() => handleSetCover({})} title="Remove cover" />
-                                    </div>
-                                    <hr/>
-                                    <button className="action-button full-width" onClick={() => coverFileInputRef.current?.click()}>Upload a cover image</button>
-                                    <input type="file" ref={coverFileInputRef} onChange={handleCoverImageUpload} style={{display: 'none'}} accept="image/*"/>
-                                    <hr/>
-                                    <AddItemForm placeholder="Paste image URL..." buttonText="Set" onSubmit={(url) => handleSetCover({ ...card.cover, imageUrl: url, color: undefined })} onCancel={() => {}} />
-                                </Popover>
-                            )}
-                        </div>
+                                  </Popover>
+                              )}
+                          </div>
+                           <div className="popover-wrapper">
+                              <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'labels' ? null : 'labels')}><Icon name="label" size={20}/><span>Labels</span></button>
+                              {activePopover === 'labels' && (
+                                  <Popover onClose={() => setActivePopover(null)} trigger={null}>
+                                      <h4>Labels</h4>
+                                      {availableLabels.map(label => (
+                                          <div key={label.id} className="popover-item label-popover-item" onClick={() => handleToggleLabel(label.id)}>
+                                              <span className="modal-label" style={{ backgroundColor: label.color }}>{label.text}</span>
+                                              {card.labels.includes(label.id) && <Icon name="check" />}
+                                          </div>
+                                      ))}
+                                  </Popover>
+                              )}
+                          </div>
+                          <div className="popover-wrapper">
+                              <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'checklist' ? null : 'checklist')}><Icon name="playlist_add_check" size={20}/><span>Checklist</span></button>
+                              {activePopover === 'checklist' && (
+                                  <Popover onClose={() => setActivePopover(null)} trigger={null}>
+                                      <h4>Add Checklist</h4>
+                                      <AddItemForm placeholder="Checklist title..." buttonText="Add" onSubmit={handleAddChecklist} onCancel={() => setActivePopover(null)} />
+                                  </Popover>
+                              )}
+                          </div>
+                          <div className="popover-wrapper">
+                              <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'dates' ? null : 'dates')}><Icon name="calendar_month" size={20}/><span>Dates</span></button>
+                              {activePopover === 'dates' && (
+                                  <Popover onClose={() => setActivePopover(null)} trigger={null}>
+                                      <h4>Change Dates</h4>
+                                      <label>Start Date</label>
+                                      <input 
+                                          type="date"
+                                          className="popover-input"
+                                          onChange={(e) => handleSetStartDate(e.target.value)}
+                                          value={card.startDate ? new Date(card.startDate).toISOString().split('T')[0] : ''}
+                                      />
+                                      <label>Due Date</label>
+                                      <input 
+                                          type="date"
+                                          className="popover-input"
+                                          onChange={(e) => handleSetDueDate(e.target.value)}
+                                          value={card.dueDate.timestamp ? new Date(card.dueDate.timestamp).toISOString().split('T')[0] : ''}
+                                      />
+                                  </Popover>
+                              )}
+                          </div>
+                          <div className="popover-wrapper">
+                              <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'attachment' ? null : 'attachment')}><Icon name="attachment" size={20}/><span>Attachment</span></button>
+                              {activePopover === 'attachment' && (
+                                  <Popover onClose={() => setActivePopover(null)} trigger={null}>
+                                      <h4>Attach</h4>
+                                      <AddItemForm placeholder="Paste any link here..." buttonText="Attach Link" onSubmit={handleAddAttachmentLink} onCancel={() => setActivePopover(null)} />
+                                      <hr/>
+                                      <button className="action-button full-width" onClick={() => fileInputRef.current?.click()}>Upload a file</button>
+                                      <input type="file" ref={fileInputRef} onChange={handleFileUpload} style={{display: 'none'}}/>
+                                  </Popover>
+                              )}
+                          </div>
+                          <div className="popover-wrapper">
+                              <button className="sidebar-btn" onClick={() => setLinkPopoverOpen(p => !p)}><Icon name="link" size={20}/><span>Link Card</span></button>
+                              {isLinkPopoverOpen && (
+                                  <Popover onClose={() => setLinkPopoverOpen(false)} trigger={null}>
+                                      <h4>Link Card</h4>
+                                      <input
+                                          type="text"
+                                          className="popover-input"
+                                          placeholder="Search cards by title or #ID..."
+                                          value={linkSearchQuery}
+                                          onChange={(e) => setLinkSearchQuery(e.target.value)}
+                                          autoFocus
+                                      />
+                                      <div className="link-search-results">
+                                          {filteredCardsForLinking.map(c => (
+                                              <div key={c.id} className="popover-item" onClick={() => handleAddLink(c.id)}>
+                                                  <span>#{c.cardShortId} - {c.text}</span>
+                                              </div>
+                                          ))}
+                                      </div>
+                                  </Popover>
+                              )}
+                          </div>
+                          <div className="popover-wrapper">
+                              <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'location' ? null : 'location')}><Icon name="location_on" size={20}/><span>Location</span></button>
+                              {activePopover === 'location' && (
+                                  <Popover onClose={() => setActivePopover(null)} trigger={null}>
+                                      <h4>Set Location</h4>
+                                      <AddItemForm placeholder="e.g. 123 Main St" buttonText="Set" onSubmit={handleSetLocation} onCancel={() => setActivePopover(null)} />
+                                  </Popover>
+                              )}
+                          </div>
+                          <div className="popover-wrapper">
+                              <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'cover' ? null : 'cover')}><Icon name="image" size={20}/><span>Cover</span></button>
+                              {activePopover === 'cover' && (
+                                  <Popover onClose={() => setActivePopover(null)} trigger={null}>
+                                      <h4>Cover</h4>
+                                       {card.cover.imageUrl && (
+                                          <>
+                                              <p>Size</p>
+                                              <div className="segmented-control cover-size-control">
+                                                  <label>
+                                                      <input type="radio" name="cover-size" checked={!card.cover.size || card.cover.size === 'normal'} onChange={() => updateCard({ cover: { ...card.cover, size: 'normal' }})} />
+                                                      <span>Normal</span>
+                                                  </label>
+                                                  <label>
+                                                      <input type="radio" name="cover-size" checked={card.cover.size === 'full'} onChange={() => updateCard({ cover: { ...card.cover, size: 'full' }})} />
+                                                      <span>Full</span>
+                                                  </label>
+                                              </div>
+                                              <hr/>
+                                          </>
+                                      )}
+                                      <p>Colors</p>
+                                      <div className="color-palette">
+                                        {['#61BD4F', '#F2D600', '#FF9F1A', '#EB5A46', '#0079BF'].map(color => (
+                                          <div key={color} className="color-swatch" style={{backgroundColor: color}} onClick={() => handleSetCover({ ...card.cover, color })} />
+                                        ))}
+                                        <div className="color-swatch" style={{background: 'transparent', border: '1px solid #ccc'}} onClick={() => handleSetCover({ color: undefined, imageUrl: card.cover.imageUrl, size: card.cover.size })} title="Remove color overlay" />
+                                      </div>
+                                      <hr/>
+                                      <button className="action-button full-width" onClick={() => coverFileInputRef.current?.click()}>Upload a cover image</button>
+                                      <input type="file" ref={coverFileInputRef} onChange={handleCoverImageUpload} style={{display: 'none'}} accept="image/*"/>
+                                      <hr/>
+                                      <AddItemForm placeholder="Paste image URL..." buttonText="Set" onSubmit={(url) => handleSetCover({ ...card.cover, imageUrl: url, size: card.cover.size || 'full' })} onCancel={() => {}} />
+                                      <hr/>
+                                      <button className="sidebar-btn delete full-width" onClick={() => handleSetCover({})}>Remove Cover</button>
+                                  </Popover>
+                              )}
+                          </div>
+                        </>}
                         <h3>Actions</h3>
                         <button className="sidebar-btn" onClick={handleToggleSubscription}>
                             <Icon name={isSubscribed ? 'visibility_off' : 'visibility'} size={20} />
                             <span>{isSubscribed ? 'Unwatch' : 'Watch'}</span>
                         </button>
-                        {customButtons.map(button => (
+                        {permissions.canEditCard && customButtons.map(button => (
                             <button key={button.id} className="sidebar-btn automation-btn" onClick={() => executeCustomButton(button, card.id)}>
                                 {button.name}
                             </button>
                         ))}
-                        <button className="sidebar-btn delete" onClick={onDeleteCard}><Icon name="delete" size={20}/><span>Delete Card</span></button>
+                        {permissions.canDeleteCard && <button className="sidebar-btn delete" onClick={onDeleteCard}><Icon name="delete" size={20}/><span>Delete Card</span></button>}
                     </div>
                 </div>
             </div>
@@ -1381,7 +1422,7 @@ const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDel
 /**
  * List Component
  */
-const List = ({ list, listIndex, visibilityMap, onUpdateListTitle, onDeleteList, onAddCard, onCardClick, moveCard, availableLabels, availableMembers }: ListProps & { availableLabels: LabelData[], availableMembers: MemberData[] }) => {
+const List = ({ list, listIndex, permissions, visibilityMap, onUpdateListTitle, onDeleteList, onAddCard, onCardClick, moveCard, availableLabels, availableMembers, lastMovedCard }: ListProps & { availableLabels: LabelData[], availableMembers: MemberData[] }) => {
   const [isAddingCard, setIsAddingCard] = useState(false);
   const [draggedOver, setDraggedOver] = useState(false);
   const [isDraggingFromThisList, setIsDraggingFromThisList] = useState(false);
@@ -1456,9 +1497,9 @@ const List = ({ list, listIndex, visibilityMap, onUpdateListTitle, onDeleteList,
   return (
     <div 
       className={`list-container ${draggedOver ? 'drag-over' : ''} ${isDraggingFromThisList ? 'is-dragging-from' : ''}`}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
+      onDragOver={permissions.canEditBoard ? handleDragOver : undefined}
+      onDragLeave={permissions.canEditBoard ? handleDragLeave : undefined}
+      onDrop={permissions.canEditBoard ? handleDrop : undefined}
     >
       <div className="list-header">
         <input 
@@ -1466,36 +1507,45 @@ const List = ({ list, listIndex, visibilityMap, onUpdateListTitle, onDeleteList,
             value={list.title}
             onChange={handleTitleChange}
             aria-label="List title"
+            readOnly={!permissions.canEditBoard}
         />
-        <button className="delete-list-btn" onClick={() => onDeleteList(listIndex)} aria-label="Delete list">
+        {permissions.canEditBoard && <button className="delete-list-btn" onClick={() => onDeleteList(listIndex)} aria-label="Delete list">
           <Icon name="delete" size={18} />
-        </button>
+        </button>}
       </div>
       <div className="cards-container">
-        {list.cards.map((card, cardIndex) => (
-          <Card
-            key={card.id}
-            card={card}
-            isHidden={!visibilityMap[card.id]}
-            onDragStart={(e) => handleDragStart(e, cardIndex)}
-            onDragEnd={handleDragEnd}
-            onClick={() => onCardClick(listIndex, cardIndex)}
-            availableLabels={availableLabels}
-            availableMembers={availableMembers}
-          />
-        ))}
+        {list.cards.map((card, cardIndex) => {
+          const isAnimating = lastMovedCard && lastMovedCard.id === card.id;
+          const animationClass = isAnimating ? `swipe-in-${lastMovedCard.direction}` : '';
+          return (
+            <Card
+              key={card.id}
+              card={card}
+              isHidden={!visibilityMap[card.id]}
+              canEdit={permissions.canEditBoard}
+              onDragStart={(e) => handleDragStart(e, cardIndex)}
+              onDragEnd={handleDragEnd}
+              onClick={() => onCardClick(listIndex, cardIndex)}
+              availableLabels={availableLabels}
+              availableMembers={availableMembers}
+              animationClass={animationClass}
+            />
+          );
+        })}
       </div>
-      {isAddingCard ? (
-        <AddItemForm
-          placeholder="Enter a title for this card..."
-          buttonText="Add Card"
-          onSubmit={handleAddCardSubmit}
-          onCancel={() => setIsAddingCard(false)}
-        />
-      ) : (
-        <button className="add-card-btn" onClick={() => setIsAddingCard(true)}>
-          <Icon name="add" size={20} /> Add a card
-        </button>
+      {permissions.canEditBoard && (
+        isAddingCard ? (
+          <AddItemForm
+            placeholder="Enter a title for this card..."
+            buttonText="Add Card"
+            onSubmit={handleAddCardSubmit}
+            onCancel={() => setIsAddingCard(false)}
+          />
+        ) : (
+          <button className="add-card-btn" onClick={() => setIsAddingCard(true)}>
+            <Icon name="add" size={20} /> Add a card
+          </button>
+        )
       )}
     </div>
   );
@@ -1704,7 +1754,7 @@ const DashboardView = ({ boardData, availableLabels, availableMembers }) => {
                                 className="chart-bar" 
                                 style={{
                                     width: `${maxCount > 0 ? (item.count / maxCount) * 100 : 0}%`,
-                                    backgroundColor: item[colorProp] || 'var(--md-sys-color-primary)'
+                                    backgroundColor: item[colorProp] || 'var(--color-primary)'
                                 }}
                             />
                         </div>
@@ -1773,16 +1823,18 @@ const NotificationsPopover = ({ notifications, onNotificationClick, onMarkAllRea
     );
 };
 
-const ShareModal = ({ members, onInvite, onClose }) => {
-    const [email, setEmail] = useState('');
+const ShareModal = ({ members, allUsers, boardMembers, onInvite, onUpdateRole, onRemoveMember, onClose, permissions }) => {
+    const [searchQuery, setSearchQuery] = useState('');
 
-    const handleInvite = (e) => {
-        e.preventDefault();
-        if (email.trim()) {
-            onInvite(email);
-            setEmail('');
-        }
-    };
+    const filteredUsers = useMemo(() => {
+        if (!searchQuery) return [];
+        const query = searchQuery.toLowerCase();
+        const boardMemberIds = boardMembers.map(bm => bm.userId);
+        return allUsers.filter(u => 
+            !boardMemberIds.includes(u.id) && 
+            (u.name.toLowerCase().includes(query) || u.email.toLowerCase().includes(query))
+        );
+    }, [searchQuery, allUsers, boardMembers]);
     
     return (
       <div className="modal-overlay" onMouseDown={onClose}>
@@ -1792,22 +1844,50 @@ const ShareModal = ({ members, onInvite, onClose }) => {
             <h3 className="modal-title no-edit">Share Board</h3>
           </div>
           <div className="share-modal-body">
-            <form onSubmit={handleInvite} className="share-invite-form">
-                <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email address" required />
-                <button type="submit">Invite</button>
-            </form>
-            <div className="shareable-link">
-                <input type="text" readOnly value="https://example.com/board/share-link" />
-                <button>Copy Link</button>
-            </div>
+            {permissions.canManageMembers && (
+                <div className="share-invite-section">
+                    <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search users by name or email..." />
+                    {filteredUsers.length > 0 && (
+                        <div className="invite-search-results">
+                            {filteredUsers.map(user => (
+                                <div key={user.id} className="invite-user-item">
+                                    <div className="user-info">
+                                        <img src={user.avatarUrl} alt={user.name} className="member-avatar" />
+                                        <span>{user.name} ({user.email})</span>
+                                    </div>
+                                    <button onClick={() => { onInvite(user.id); setSearchQuery(''); }}>Invite</button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
             <div className="share-members-list">
                 <h4>Board Members</h4>
-                {members.map(member => (
-                    <div key={member.id} className="share-member-item">
-                        <img src={member.avatarUrl} alt={member.name} className="member-avatar" />
-                        <span>{member.name}</span>
-                    </div>
-                ))}
+                {members.map(member => {
+                    const boardMember = boardMembers.find(bm => bm.userId === member.id);
+                    if (!boardMember) return null;
+                    const canChangeRole = permissions.canManageMembers && (permissions.isOwner || (boardMember.role !== 'owner' && boardMember.role !== 'admin'));
+                    const canRemove = permissions.canManageMembers && boardMember.role !== 'owner';
+
+                    return (
+                        <div key={member.id} className="share-member-item">
+                            <img src={member.avatarUrl} alt={member.name} className="member-avatar" />
+                            <span className="member-name">{member.name}</span>
+                            <select 
+                                value={boardMember.role}
+                                onChange={(e) => onUpdateRole(member.id, e.target.value as Role)}
+                                disabled={!canChangeRole}
+                            >
+                                {permissions.isOwner && <option value="owner">Owner</option>}
+                                {(permissions.isOwner || (boardMember.role !== 'owner')) && <option value="admin">Admin</option>}
+                                <option value="member">Member</option>
+                                <option value="viewer">Viewer</option>
+                            </select>
+                            {canRemove && <button className="remove-member-btn" onClick={() => onRemoveMember(member.id)} aria-label="Remove member"><Icon name="close" size={18}/></button>}
+                        </div>
+                    );
+                })}
             </div>
           </div>
         </div>
@@ -1981,19 +2061,12 @@ const PalettePreview = ({ sourceColor }: { sourceColor: string }) => {
             // Return a default/fallback palette for invalid color strings
             return ['#cccccc', '#bbbbbb', '#aaaaaa', '#999999'];
         }
-        try {
-            const theme = themeFromSourceColor(argbFromHex(sourceColor));
-            // Using tones for light theme as a consistent preview
-            return [
-                hexFromArgb(theme.palettes.primary.tone(40)),
-                hexFromArgb(theme.palettes.secondary.tone(40)),
-                hexFromArgb(theme.palettes.tertiary.tone(40)),
-                hexFromArgb(theme.palettes.neutral.tone(94)),
-            ];
-        } catch (e) {
-            console.error("Error generating palette preview:", e);
-            return ['#cccccc', '#bbbbbb', '#aaaaaa', '#999999'];
-        }
+        return [
+            sourceColor,
+            '#42474E', // Represents a dark surface variant
+            '#DEE3EA', // Represents a light surface variant
+            '#F0F4F9', // Represents a light surface container
+        ];
     }, [sourceColor]);
 
     return (
@@ -2171,20 +2244,32 @@ const AppearanceSettings = ({ theme, updateTheme, resetTheme, exportTheme, impor
     );
 };
 
-const SettingsModal = ({ isOpen, onClose, onClearData, theme, updateTheme, resetTheme, exportTheme, importTheme, onOpenElementCustomizer }) => {
+const SettingsModal = ({ isOpen, onClose, onClearData, theme, updateTheme, resetTheme, exportTheme, importTheme, onOpenElementCustomizer, onExportJson, onExportCsv, onImportJson }) => {
     if (!isOpen) return null;
     const [activeTab, setActiveTab] = useState('appearance');
+    const boardImportInputRef = useRef<HTMLInputElement>(null);
 
     const licenses = [
         { name: 'React & React DOM', license: 'MIT License', url: 'https://github.com/facebook/react/blob/main/LICENSE' },
         { name: 'Geist Sans & Mono Fonts', license: 'SIL Open Font License 1.1', url: 'https://github.com/vercel/geist-font/blob/main/LICENSE' },
-        { name: 'Material Color Utilities', license: 'Apache License 2.0', url: 'https://github.com/material-foundation/material-color-utilities/blob/main/LICENSE' },
     ];
 
     const handleClearData = () => {
         if (window.confirm('Are you sure you want to delete all board data? This action cannot be undone.')) {
             onClearData();
         }
+    };
+    
+    const handleImportClick = () => {
+        boardImportInputRef.current?.click();
+    };
+
+    const handleFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            onImportJson(file);
+        }
+        if (e.target) e.target.value = ''; // Allow re-uploading same file
     };
 
     return (
@@ -2217,10 +2302,25 @@ const SettingsModal = ({ isOpen, onClose, onClearData, theme, updateTheme, reset
                             </div>
                         )}
                         {activeTab === 'general' && (
-                            <div>
+                             <div>
                                 <h4>General Settings</h4>
                                 <div className="setting-item">
-                                    <h5>Board Data</h5>
+                                    <h5>Export / Import Board</h5>
+                                    <p>Export your board to a JSON file for backup, or to a CSV file for use in other applications.</p>
+                                    <div className="theme-actions">
+                                        <button className="sidebar-btn" onClick={onExportJson}><Icon name="file_download" size={20}/>Export as JSON</button>
+                                        <button className="sidebar-btn" onClick={onExportCsv}><Icon name="grid_on" size={20}/>Export as CSV</button>
+                                    </div>
+                                    <hr style={{margin: '16px 0'}} />
+                                    <p>Restore a board from a JSON backup file. This will overwrite all current board data.</p>
+                                    <div className="theme-actions">
+                                        <button className="sidebar-btn" onClick={handleImportClick}><Icon name="file_upload" size={20}/>Import from JSON</button>
+                                        <input type="file" ref={boardImportInputRef} onChange={handleFileImport} accept=".json" style={{ display: 'none' }} />
+                                    </div>
+                                </div>
+
+                                <div className="setting-item" style={{marginTop: '16px'}}>
+                                    <h5>Danger Zone</h5>
                                     <p>This will permanently delete all lists, cards, and settings from your browser's local storage.</p>
                                     <button className="sidebar-btn delete" onClick={handleClearData}>Clear All Board Data</button>
                                 </div>
@@ -2335,15 +2435,28 @@ const ElementCustomizerModal = ({ isOpen, onClose, originalCss, onSave }) => {
     );
 };
 
-
 /**
  * Main App Component
  */
 const App = () => {
   const themeManager = useTheme();
 
+  const [allUsers, setAllUsers] = useState<UserData[]>(() => {
+    const saved = localStorage.getItem('mosaic.allUsers');
+    return saved ? JSON.parse(saved) : INITIAL_USERS;
+  });
+  
+  const [boardMembers, setBoardMembers] = useState<BoardMember[]>(() => {
+    const saved = localStorage.getItem('mosaic.boardMembers');
+    return saved ? JSON.parse(saved) : INITIAL_BOARD_MEMBERS;
+  });
+
+  const [currentUser, setCurrentUser] = useState<UserData | null>(() => {
+      const saved = localStorage.getItem('mosaic.currentUser');
+      return saved ? JSON.parse(saved) : INITIAL_USERS[0];
+  });
+
   const [availableLabels] = useState<LabelData[]>(AVAILABLE_LABELS_DATA);
-  const [availableMembers, setAvailableMembers] = useState<MemberData[]>(AVAILABLE_MEMBERS_DATA);
   
   const [boardData, setBoardData] = useState<ListData[]>(() => {
     try {
@@ -2390,10 +2503,10 @@ const App = () => {
                     {
                         id: cardId1, cardShortId: 1, text: 'Design new marketing website',
                         description: 'Includes wireframes, mockups, and prototypes for the new homepage and feature pages. Focus on a clean, modern aesthetic with clear calls to action.',
-                        comments: [{id: generateId(), authorId: 'member-2', text: 'Great start, @Charlie! What do you think of the color palette?', timestamp: createTimestamp(), attachments: []}],
+                        comments: [{id: generateId(), authorId: 'user-2', text: 'Great start, @Charlie! What do you think of the color palette?', timestamp: createTimestamp(), attachments: []}],
                         activity: [createActivity('created this card.')],
                         labels: ['label-3', 'label-5'], // Design, Research
-                        members: ['member-1'], // Alice
+                        members: ['user-1'], // Alice
                         dueDate: { timestamp: Date.now() + 5 * 24 * 60 * 60 * 1000, completed: false },
                         startDate: Date.now() - 2 * 24 * 60 * 60 * 1000,
                         location: "Design Studio",
@@ -2407,7 +2520,7 @@ const App = () => {
                         }],
                         attachments: [{id: generateId(), url: 'https://www.figma.com', name: 'Link: figma.com', timestamp: createTimestamp(), type: 'link'}],
                         cover: { imageUrl: `https://picsum.photos/seed/${cardId1}/600/400` },
-                        subscribers: ['member-1'],
+                        subscribers: ['user-1'],
                         customFields: { 'field-2': 'High'},
                         linkedCards: []
                     }
@@ -2421,7 +2534,7 @@ const App = () => {
                         comments: [],
                         activity: [createActivity('created this card.'), createActivity('linked card #3 to this card.')],
                         labels: ['label-1', 'label-4'], // Feature, Docs
-                        members: ['member-1', 'member-2'], // Alice, Bob
+                        members: ['user-1', 'user-2'], // Alice, Bob
                         dueDate: { timestamp: Date.now() + 14 * 24 * 60 * 60 * 1000, completed: false },
                         startDate: Date.now(),
                         location: "",
@@ -2434,7 +2547,7 @@ const App = () => {
                         ],
                         attachments: [],
                         cover: { color: '#61BD4F' }, // Green
-                        subscribers: ['member-3'], // Charlie is watching
+                        subscribers: ['user-3'], // Charlie is watching
                         customFields: { 'field-1': 8 },
                         linkedCards: [cardId3],
                     },
@@ -2444,7 +2557,7 @@ const App = () => {
                         comments: [],
                         activity: [createActivity('created this card.')],
                         labels: ['label-4'], // Docs
-                        members: ['member-3'], // Charlie
+                        members: ['user-3'], // Charlie
                         dueDate: { timestamp: Date.now() + 18 * 24 * 60 * 60 * 1000, completed: false },
                         startDate: null,
                         location: "",
@@ -2465,7 +2578,7 @@ const App = () => {
                         comments: [],
                         activity: [createActivity('completed this card.')],
                         labels: ['label-2'], // Bug
-                        members: ['member-2'], // Bob
+                        members: ['user-2'], // Bob
                         dueDate: { timestamp: Date.now() - 3 * 24 * 60 * 60 * 1000, completed: true },
                         startDate: Date.now() - 7 * 24 * 60 * 60 * 1000,
                         location: "",
@@ -2500,6 +2613,7 @@ const App = () => {
   const [isCustomFieldsModalOpen, setCustomFieldsModalOpen] = useState(false);
   const [isSettingsModalOpen, setSettingsModalOpen] = useState(false);
   const [isElementCustomizerOpen, setElementCustomizerOpen] = useState(false);
+  const [lastMovedCard, setLastMovedCard] = useState<{id: string, direction: 'left' | 'right'} | null>(null);
 
   const [automations, setAutomations] = useState<Automations>({
       rules: [
@@ -2510,7 +2624,7 @@ const App = () => {
           {id: 'sched-1', name: "Archive Done cards", schedule: 'weekly', targetListId: 'list-3', action: { type: 'post-comment', text: 'This card is scheduled for archival.' }}
       ],
       cardButtons: [
-          {id: 'btn-1', name: "Request Review", action: { type: 'add-member', memberId: 'member-2' }}
+          {id: 'btn-1', name: "Request Review", action: { type: 'add-member', memberId: 'user-2' }}
       ],
       boardButtons: []
   });
@@ -2534,11 +2648,13 @@ const App = () => {
     }
     return 4;
   });
-
   
-  const CURRENT_USER_ID = availableMembers.length > 0 ? availableMembers[0].id : '';
+  const availableMembers = useMemo(() => {
+    const memberIds = boardMembers.map(bm => bm.userId);
+    return allUsers.filter(u => memberIds.includes(u.id)).map(u => ({ id: u.id, name: u.name, avatarUrl: u.avatarUrl }));
+  }, [allUsers, boardMembers]);
   
-  const addNotification = useCallback((text, card, list) => {
+  const addNotification = useCallback((text: string, card: CardData, list: ListData) => {
     const newNotification: NotificationData = {
         id: generateId(), text, cardId: card.id, listId: list.id,
         timestamp: createTimestamp(), read: false
@@ -2546,6 +2662,18 @@ const App = () => {
     setNotifications(prev => [newNotification, ...prev]);
   }, []);
   
+  useEffect(() => {
+    localStorage.setItem('mosaic.currentUser', JSON.stringify(currentUser));
+  }, [currentUser]);
+
+  useEffect(() => {
+    localStorage.setItem('mosaic.allUsers', JSON.stringify(allUsers));
+  }, [allUsers]);
+  
+  useEffect(() => {
+    localStorage.setItem('mosaic.boardMembers', JSON.stringify(boardMembers));
+  }, [boardMembers]);
+
   useEffect(() => {
     try {
         const sanitizedData = getSanitizedBoardDataForStorage(boardData);
@@ -2589,29 +2717,68 @@ const App = () => {
 }, [selectedCard, isFilterPopoverOpen, isNotificationsOpen, isShareModalOpen, isAutomationModalOpen, isCustomFieldsModalOpen, isSettingsModalOpen, isElementCustomizerOpen]);
 
 useEffect(() => {
+    const checkDueDates = () => {
+        const now = Date.now();
+        const oneDay = 24 * 60 * 60 * 1000;
+
+        boardData.forEach(list => {
+            list.cards.forEach(card => {
+                if (card.dueDate?.timestamp && !card.dueDate.completed) {
+                    const dueTime = card.dueDate.timestamp;
+                    const isDueSoon = dueTime > now && dueTime < now + oneDay;
+                    
+                    if (isDueSoon) {
+                        const hasNotification = notifications.some(n => 
+                            n.cardId === card.id && n.text.includes('is due soon')
+                        );
+                        if (!hasNotification) {
+                            addNotification(`Card "${card.text}" is due soon.`, card, list);
+                        }
+                    }
+                }
+            });
+        });
+    };
+    
+    // Check on initial load
+    checkDueDates();
+    
+    // Then check every minute
+    const intervalId = setInterval(checkDueDates, 60000); 
+
+    return () => clearInterval(intervalId);
+}, [boardData, notifications, addNotification]);
+
+useEffect(() => {
     const interval = setInterval(() => {
         // console.log("Checking for scheduled automation commands...");
     }, 60 * 1000);
     return () => clearInterval(interval);
 }, [automations.scheduled, boardData]);
 
+  const permissions = usePermissions(currentUser, boardMembers);
+
   const handleAddList = (title: string) => {
+    if (!permissions.canEditBoard) return;
     const newList: ListData = { id: generateId(), title, cards: [] };
     setBoardData([...boardData, newList]);
     setIsAddingList(false);
   };
 
   const handleDeleteList = (listIndex: number) => {
+    if (!permissions.canEditBoard) return;
     setBoardData(boardData.filter((_, index) => index !== listIndex));
   };
   
   const handleUpdateListTitle = (listIndex: number, newTitle: string) => {
+    if (!permissions.canEditBoard) return;
     const newBoardData = [...boardData];
     newBoardData[listIndex].title = newTitle;
     setBoardData(newBoardData);
   };
 
   const handleAddCard = (listIndex: number, text: string) => {
+    if (!permissions.canEditBoard) return;
     const newCount = cardCounter + 1;
     const newCard: CardData = { 
       id: generateId(), text, description: '', comments: [],
@@ -2626,6 +2793,13 @@ useEffect(() => {
     setCardCounter(newCount);
   };
   
+  const getWatchedUpdateText = (oldCard, newCard) => {
+      if (oldCard.description !== newCard.description) return "Description was updated";
+      if (oldCard.dueDate.timestamp !== newCard.dueDate.timestamp) return "Due date was changed";
+      if (oldCard.dueDate.completed !== newCard.dueDate.completed) return newCard.dueDate.completed ? "Due date was marked complete" : "Due date was marked incomplete";
+      return null;
+  }
+  
   const handleUpdateCard = (listIndex: number, cardIndex: number, updates: Partial<CardData>, isAutomated: boolean = false) => {
       const newBoardData = [...boardData];
       const oldCard = newBoardData[listIndex].cards[cardIndex];
@@ -2633,19 +2807,21 @@ useEffect(() => {
 
       const updatedCard = { ...oldCard, ...updates };
       
-      if (!isAutomated) {
+      if (!isAutomated && currentUser) {
         if (updates.members) {
-            updates.members.forEach(memberId => {
-              if (!oldCard.members.includes(memberId) && memberId === CURRENT_USER_ID) {
-                addNotification(`You were added to "${updatedCard.text}"`, updatedCard, list);
-              }
+            const newlyAddedMembers = updates.members.filter(memberId => !oldCard.members.includes(memberId));
+            newlyAddedMembers.forEach(memberId => {
+                const member = availableMembers.find(m => m.id === memberId);
+                if (member) {
+                    addNotification(`${currentUser.name} assigned ${member.name} to "${updatedCard.text}"`, updatedCard, list);
+                }
             });
         }
         
         const watchedUpdateText = getWatchedUpdateText(oldCard, updatedCard);
         if (watchedUpdateText) {
             updatedCard.subscribers.forEach(id => {
-                if (id === CURRENT_USER_ID) {
+                if (id !== currentUser.id) {
                     addNotification(`${watchedUpdateText} on "${updatedCard.text}"`, updatedCard, list)
                 }
             })
@@ -2663,47 +2839,49 @@ useEffect(() => {
       }
   };
   
-  const getWatchedUpdateText = (oldCard, newCard) => {
-      if (oldCard.description !== newCard.description) return "Description was updated";
-      if (oldCard.dueDate.timestamp !== newCard.dueDate.timestamp) return "Due date was changed";
-      if (oldCard.dueDate.completed !== newCard.dueDate.completed) return newCard.dueDate.completed ? "Due date was marked complete" : "Due date was marked incomplete";
-      return null;
-  }
-  
   const handleAddComment = (listIndex: number, cardIndex: number, commentText: string, attachments: AttachmentData[]) => {
+      if (!permissions.canComment || !currentUser) return;
       const newBoardData = [...boardData];
       const card = newBoardData[listIndex].cards[cardIndex];
       const list = newBoardData[listIndex];
       const newComment: CommentData = { 
-        id: generateId(), authorId: CURRENT_USER_ID, text: commentText, timestamp: createTimestamp(), attachments 
+        id: generateId(), authorId: currentUser.id, text: commentText, timestamp: createTimestamp(), attachments 
       };
       card.comments.unshift(newComment);
       
-      const currentUser = availableMembers.find(m => m.id === CURRENT_USER_ID);
       const activityText = attachments.length > 0 
-        ? `${currentUser?.name || 'User'} added a comment and attached ${attachments.length} file(s).`
-        : `${currentUser?.name || 'User'} added a comment.`
+        ? `${currentUser.name} added a comment and attached ${attachments.length} file(s).`
+        : `${currentUser.name} added a comment.`
       card.activity.unshift(createActivity(activityText));
       
-      const mentions: string[] = commentText.match(/@(\w+)/g) || [];
-      mentions.forEach(mentionStr => {
-          const memberName = mentionStr.substring(1);
-          const member = availableMembers.find(m => m.name === memberName);
-          if (member && member.id === CURRENT_USER_ID) {
-              addNotification(`You were mentioned in a comment on "${card.text}"`, card, list);
+      const mentionedUserIds = (commentText.match(/@(\w+)/g) || [])
+          .map(mentionStr => {
+              const memberName = mentionStr.substring(1);
+              const member = availableMembers.find(m => m.name === memberName);
+              return member ? member.id : null;
+          })
+          .filter(id => id !== null && id !== currentUser.id) as string[];
+
+      // Notify mentioned users
+      mentionedUserIds.forEach(userId => {
+          const member = availableMembers.find(m => m.id === userId);
+          if (member) {
+              addNotification(`${currentUser.name} mentioned ${member.name} in a comment on "${card.text}"`, card, list);
           }
       });
-      
-      card.subscribers.forEach(id => {
-          if (id === CURRENT_USER_ID && id !== CURRENT_USER_ID) {
-              addNotification(`A new comment was added to "${card.text}"`, card, list);
+
+      // Notify subscribers who were not mentioned
+      card.subscribers.forEach(subscriberId => {
+          if (subscriberId !== currentUser.id && !mentionedUserIds.includes(subscriberId)) {
+              addNotification(`${currentUser.name} commented on "${card.text}"`, card, list);
           }
-      })
+      });
       
       setBoardData(newBoardData);
   };
   
   const handleDeleteCard = (listIndex: number, cardIndex: number) => {
+      if (!permissions.canDeleteCard) return;
       const newBoardData = [...boardData];
       newBoardData[listIndex].cards.splice(cardIndex, 1);
       setBoardData(newBoardData);
@@ -2719,17 +2897,23 @@ useEffect(() => {
   };
 
   const moveCard = (sourceListIndex: number, sourceCardIndex: number, destListIndex: number, destCardIndex: number, isAutomated: boolean = false) => {
+    if (!permissions.canEditBoard) return;
     if (sourceListIndex === destListIndex && sourceCardIndex === destCardIndex) return;
+    
     const newBoardData = [...boardData];
     const sourceList = newBoardData[sourceListIndex];
     const destList = newBoardData[destListIndex];
     const [draggedCard] = sourceList.cards.splice(sourceCardIndex, 1);
     
-    if (!isAutomated) {
+    if (!isAutomated && currentUser) {
         if (sourceListIndex !== destListIndex) {
+            const direction = destListIndex > sourceListIndex ? 'right' : 'left';
+            setLastMovedCard({ id: draggedCard.id, direction });
+            setTimeout(() => setLastMovedCard(null), 400); // Match CSS duration
+
             draggedCard.activity.unshift(createActivity(`moved this card from ${sourceList.title} to ${destList.title}`));
             draggedCard.subscribers.forEach(id => {
-                if (id === CURRENT_USER_ID) {
+                if (id !== currentUser.id) {
                     addNotification(`"${draggedCard.text}" was moved to ${destList.title}`, draggedCard, destList);
                 }
             });
@@ -2830,22 +3014,8 @@ useEffect(() => {
       setNotifications(prev => prev.map(n => ({...n, read: true})));
   };
   
-  const handleInviteUser = (email: string) => {
-      const name = email.split('@')[0];
-      const newMember: MemberData = {
-          id: generateId(),
-          name: name.charAt(0).toUpperCase() + name.slice(1),
-          avatarUrl: `https://i.pravatar.cc/150?u=${generateId()}`
-      };
-      setAvailableMembers(prev => [...prev, newMember]);
-      alert(`${newMember.name} has been invited to the board!`);
-  }
-
   const handleClearData = () => {
-    localStorage.removeItem('mosaic-board-data');
-    localStorage.removeItem('mosaic-custom-fields');
-    localStorage.removeItem('mosaic.theme');
-    localStorage.removeItem('mosaic.customCss');
+    localStorage.clear();
     window.location.reload();
   };
   
@@ -2895,9 +3065,127 @@ useEffect(() => {
     return map;
   }, [boardData, filters]);
   
+    const handleExportJson = useCallback(() => {
+        const backupData = {
+            boardData,
+            customFieldDefinitions,
+            automations,
+            boardMembers,
+            cardCounter,
+        };
+        const jsonString = JSON.stringify(backupData, null, 2);
+        const blob = new Blob([jsonString], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `mosaic-board-backup-${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }, [boardData, customFieldDefinitions, automations, boardMembers, cardCounter]);
+
+    const handleExportCsv = useCallback(() => {
+        const header = [
+            'Card ID', 'Card Title', 'Description', 'List', 'Labels', 'Members', 
+            'Due Date', 'Start Date', 'Location', 'Is Completed', 
+            'Checklists (Completed/Total)', 'Attachments (Count)', 'Comments (Count)'
+        ];
+
+        const rows = boardData.flatMap(list => 
+            list.cards.map(card => {
+                const labels = card.labels.map(id => availableLabels.find(l => l.id === id)?.text).filter(Boolean).join(', ');
+                const members = card.members.map(id => availableMembers.find(m => m.id === id)?.name).filter(Boolean).join(', ');
+                const checklists = card.checklists.map(cl => {
+                    const total = cl.items.length;
+                    const completed = cl.items.filter(i => i.completed).length;
+                    return `${cl.title}: ${completed}/${total}`;
+                }).join('; ');
+
+                return [
+                    card.cardShortId,
+                    `"${card.text.replace(/"/g, '""')}"`, // Escape quotes
+                    `"${card.description.replace(/"/g, '""')}"`,
+                    list.title,
+                    labels,
+                    members,
+                    card.dueDate.timestamp ? new Date(card.dueDate.timestamp).toISOString() : '',
+                    card.startDate ? new Date(card.startDate).toISOString() : '',
+                    card.location,
+                    card.dueDate.completed,
+                    checklists,
+                    card.attachments.length,
+                    card.comments.length,
+                ].join(',');
+            })
+        );
+        
+        const csvContent = [header.join(','), ...rows].join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `mosaic-board-export-${new Date().toISOString().split('T')[0]}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+    }, [boardData, availableLabels, availableMembers]);
+
+    const handleImportJson = useCallback((file: File) => {
+        if (!window.confirm('This will overwrite your current board with the imported data. Are you sure you want to continue?')) {
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            try {
+                const imported = JSON.parse(event.target.result as string);
+                if (
+                    !imported.boardData || 
+                    !imported.customFieldDefinitions || 
+                    !imported.automations || 
+                    !imported.boardMembers ||
+                    typeof imported.cardCounter === 'undefined'
+                ) {
+                    throw new Error("Invalid or corrupted backup file.");
+                }
+                
+                setBoardData(imported.boardData);
+                setCustomFieldDefinitions(imported.customFieldDefinitions);
+                setAutomations(imported.automations);
+                setBoardMembers(imported.boardMembers);
+                setCardCounter(imported.cardCounter);
+
+                alert('Board restored successfully!');
+            } catch (e) {
+                alert('Failed to import board data. The file may be invalid or corrupted.');
+                console.error("Failed to import board", e);
+            }
+        };
+        reader.readAsText(file);
+    }, []);
+
   const currentCard = selectedCard ? boardData[selectedCard.listIndex].cards[selectedCard.cardIndex] : null;
   const isFiltersActive = filters.query.length > 0 || filters.members.length > 0 || filters.labels.length > 0 || filters.dueDate !== 'any';
   const unreadNotificationsCount = notifications.filter(n => !n.read).length;
+
+  // --- Share/Member Handlers ---
+  const handleInviteUser = (userId: string) => {
+    if (!permissions.canManageMembers) return;
+    setBoardMembers(prev => [...prev, { userId, role: 'member' }]);
+  };
+
+  const handleUpdateRole = (userId: string, role: Role) => {
+    if (!permissions.canManageMembers) return;
+    setBoardMembers(prev => prev.map(bm => bm.userId === userId ? { ...bm, role } : bm));
+  };
+
+  const handleRemoveMember = (userId: string) => {
+    if (!permissions.canManageMembers) return;
+    setBoardMembers(prev => prev.filter(bm => bm.userId !== userId));
+  };
 
   const renderView = () => {
     switch (view) {
@@ -2911,13 +3199,14 @@ useEffect(() => {
                 <div className="board">
                     {boardData.map((list, index) => (
                       <List
-                        key={list.id} list={list} listIndex={index} visibilityMap={visibilityMap}
+                        key={list.id} list={list} listIndex={index} permissions={permissions} visibilityMap={visibilityMap}
                         onUpdateListTitle={handleUpdateListTitle} onDeleteList={handleDeleteList}
                         onAddCard={handleAddCard} onCardClick={handleCardClick} moveCard={moveCard}
                         availableLabels={availableLabels} availableMembers={availableMembers}
+                        lastMovedCard={lastMovedCard}
                       />
                     ))}
-                    <div className="list-container">
+                    {permissions.canEditBoard && <div className="list-container">
                       {isAddingList ? (
                         <AddItemForm
                           placeholder="Enter list title..." buttonText="Add List"
@@ -2928,7 +3217,7 @@ useEffect(() => {
                           <Icon name="add" size={20} /> Add another list
                         </button>
                       )}
-                    </div>
+                    </div>}
                 </div>
             );
     }
@@ -2946,7 +3235,7 @@ useEffect(() => {
             </div>
         </div>
         <div className="header-right">
-            <button className="header-btn" onClick={() => setCustomFieldsModalOpen(true)}><Icon name="data_object" size={20}/><span>Fields</span></button>
+            {permissions.canManageSettings && <button className="header-btn" onClick={() => setCustomFieldsModalOpen(true)}><Icon name="data_object" size={20}/><span>Fields</span></button>}
             <div className="popover-wrapper">
                 <button className="filter-button" onClick={() => setFilterPopoverOpen(o => !o)}>
                     <Icon name="filter_list" size={20}/>
@@ -2963,7 +3252,7 @@ useEffect(() => {
                     />
                 )}
             </div>
-            <button className="header-btn icon-only" onClick={() => setAutomationModalOpen(true)} aria-label="Automation"><Icon name="smart_toy" /></button>
+            {permissions.canManageSettings && <button className="header-btn icon-only" onClick={() => setAutomationModalOpen(true)} aria-label="Automation"><Icon name="smart_toy" /></button>}
             <div className="popover-wrapper">
                 <button className="header-btn icon-only" onClick={() => setNotificationsOpen(o => !o)} aria-label="Notifications">
                     <Icon name="notifications" />
@@ -2979,6 +3268,9 @@ useEffect(() => {
                 )}
             </div>
              <button className="header-btn share-btn" onClick={() => setShareModalOpen(true)}><Icon name="person_add" size={20}/><span>Share</span></button>
+             <div className="user-profile">
+                <img src={currentUser.avatarUrl} alt={currentUser.name} className="member-avatar" />
+             </div>
              <button className="header-btn icon-only" onClick={() => setSettingsModalOpen(true)} aria-label="Settings"><Icon name="settings"/></button>
         </div>
       </header>
@@ -2995,7 +3287,8 @@ useEffect(() => {
             onDeleteCard={() => handleDeleteCard(selectedCard.listIndex, selectedCard.cardIndex)}
             availableLabels={availableLabels}
             availableMembers={availableMembers}
-            currentUserId={CURRENT_USER_ID}
+            currentUser={currentUser}
+            permissions={permissions}
             customButtons={automations.cardButtons}
             executeCustomButton={(button, cardId) => executeAutomationAction(button.action, cardId)}
             customFieldDefinitions={customFieldDefinitions}
@@ -3003,7 +3296,16 @@ useEffect(() => {
         />
       )}
       {isShareModalOpen && (
-          <ShareModal members={availableMembers} onInvite={handleInviteUser} onClose={() => setShareModalOpen(false)} />
+          <ShareModal 
+            members={availableMembers} 
+            allUsers={allUsers}
+            boardMembers={boardMembers}
+            onInvite={handleInviteUser} 
+            onUpdateRole={handleUpdateRole}
+            onRemoveMember={handleRemoveMember}
+            onClose={() => setShareModalOpen(false)} 
+            permissions={permissions}
+          />
       )}
       <AutomationModal
         isOpen={isAutomationModalOpen}
@@ -3025,6 +3327,9 @@ useEffect(() => {
         onClose={() => setSettingsModalOpen(false)}
         onClearData={handleClearData}
         onOpenElementCustomizer={() => setElementCustomizerOpen(true)}
+        onExportJson={handleExportJson}
+        onExportCsv={handleExportCsv}
+        onImportJson={handleImportJson}
         {...themeManager}
       />
        <ElementCustomizerModal
