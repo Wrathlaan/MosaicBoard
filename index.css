@@ -229,6 +229,9 @@ input[readOnly], textarea[readOnly] {
     flex: 0 0 150px;
     border-right: 1px solid var(--color-outline-variant);
     padding-right: 24px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
 }
 
 .settings-sidebar button,
@@ -264,6 +267,11 @@ input[readOnly], textarea[readOnly] {
     color: var(--color-on-primary);
 }
 
+.developer-credit {
+    font-size: 0.8rem;
+    color: var(--color-on-surface-variant);
+    padding: 10px 12px;
+}
 
 .settings-content {
     flex-grow: 1;
@@ -1590,6 +1598,7 @@ header h1 {
     font-weight: 500;
     color: var(--color-on-surface);
     font-size: 0.9375rem;
+    text-decoration: none;
 }
 .sidebar-btn:hover {
     background: var(--color-surface-container-hover);
@@ -1944,3 +1953,57 @@ header h1 {
 }
 .filter-option .member-avatar { margin-left: 0; }
 .filter-option .card-label { flex-shrink: 0; }
+
+/* Comment Editing */
+.activity-meta {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--color-on-surface-variant);
+    font-size: 0.875rem;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  color: var(--color-on-surface-variant);
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+  font-size: inherit;
+  font-family: inherit;
+  line-height: 1;
+}
+
+.link-button:hover {
+  color: var(--color-primary);
+}
+
+.comment-edit-form {
+    margin: 8px 0;
+}
+
+.comment-edit-form textarea {
+    width: 100%;
+    min-height: 80px;
+    background: var(--color-surface);
+    border: 2px solid var(--color-primary); /* Show it's in edit mode */
+    border-radius: var(--radius);
+    padding: 8px 12px;
+    font-size: 1rem;
+    font-family: var(--font-sans);
+    line-height: 1.55;
+    color: var(--color-on-surface);
+    resize: vertical;
+    margin-bottom: 8px;
+}
+
+.comment-edit-form textarea:focus {
+    outline: none;
+}
+
+.comment-edit-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}

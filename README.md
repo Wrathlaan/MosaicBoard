@@ -2,6 +2,8 @@
 
 MosaicBoard is a feature-rich, Trello-like project management application designed for organizing tasks with interactive lists and draggable cards. It offers extensive customization and multiple views to suit various workflows.
 
+**Note:** This application is in active development. Features may be incomplete or change over time.
+
 *A clean, modern interface showing multiple lists like "Website Redesign", "Q2 Features", and "Done". Cards within the lists display titles, colored labels, cover images, and member avatars. The header provides options for different views (Board, Calendar, Table, etc.), filtering, and settings.*
 
 ## Key Features

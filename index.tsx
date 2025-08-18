@@ -1,616 +1,3539 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
-import { argbFromHex, themeFromSourceColor, applyTheme } from '@material/material-color-utilities';
 
-// Types
+// --- THEME ---
 interface Theme {
-  mode: 'system' | 'light' | 'dark';
-  accent: string;
-  radius: number;
-  density: 'compact' | 'comfortable' | 'cozy';
-  fontScale: number;
-  reducedMotion: boolean;
-  boardBackground: 'none' | 'dots' | 'grid' | 'noise' | 'nebula';
+    mode: 'system' | 'light' | 'dark';
+    sourceColor: string;
+    radius: number;
+    density: 'compact' | 'comfortable' | 'cozy';
+    fontScale: number;
+    reducedMotion: boolean;
+    boardBackground: 'none' | 'dots' | 'grid' | 'noise' | 'nebula';
+    boardWidth: 'normal' | 'wide';
 }
 
-interface Card {
+const DEFAULT_THEME: Theme = {
+    mode: 'system',
+    sourceColor: '#0079BF', // Calm Blue
+    radius: 10,
+    density: 'comfortable',
+    fontScale: 1.00,
+    reducedMotion: false,
+    boardBackground: 'none',
+    boardWidth: 'wide',
+};
+
+const useTheme = () => {
+    const [theme, setTheme] = useState<Theme>(() => {
+        try {
+            const savedTheme = localStorage.getItem('mosaic.theme');
+            if (savedTheme) {
+                const parsed = JSON.parse(savedTheme);
+                // Ensure all keys from default theme are present
+                return { ...DEFAULT_THEME, ...parsed };
+            }
+        } catch (e) {
+            console.error("Failed to parse theme from localStorage", e);
+        }
+        return DEFAULT_THEME;
+    });
+
+    const [customCss, setCustomCss] = useState<{ [key: string]: string }>(() => {
+        try {
+            const saved = localStorage.getItem('mosaic.customCss');
+            return saved ? JSON.parse(saved) : {};
+        } catch (e) {
+            console.error("Failed to parse custom CSS from localStorage", e);
+            return {};
+        }
+    });
+
+    const updateTheme = useCallback((updates: Partial<Theme>) => {
+        setTheme(prev => ({ ...prev, ...updates }));
+    }, []);
+
+    const updateCustomCss = useCallback((newCss: { [key: string]: string }) => {
+        setCustomCss(newCss);
+    }, []);
+
+    const resetTheme = useCallback(() => {
+        setTheme(DEFAULT_THEME);
+        setCustomCss({});
+    }, []);
+
+    const exportTheme = useCallback(() => {
+        const jsonString = JSON.stringify(theme, null, 2);
+        const blob = new Blob([jsonString], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'mosaic-board-theme.mbtheme';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }, [theme]);
+
+    const importTheme = useCallback((file: File) => {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            try {
+                const imported = JSON.parse(event.target.result as string);
+                const validKeys = Object.keys(DEFAULT_THEME);
+                const validatedTheme: Partial<Theme> = {};
+
+                for (const key of validKeys) {
+                    if (key in imported) {
+                        validatedTheme[key] = imported[key];
+                    }
+                }
+                // Basic validation
+                if (validatedTheme.radius) validatedTheme.radius = Math.max(0, Math.min(16, Number(validatedTheme.radius)));
+                if (validatedTheme.fontScale) validatedTheme.fontScale = Math.max(0.9, Math.min(1.1, Number(validatedTheme.fontScale)));
+
+                updateTheme(validatedTheme);
+            } catch (e) {
+                alert('Invalid theme file.');
+                console.error("Failed to import theme", e);
+            }
+        };
+        reader.readAsText(file);
+    }, [updateTheme]);
+
+    useEffect(() => {
+        localStorage.setItem('mosaic.theme', JSON.stringify(theme));
+
+        const docEl = document.documentElement;
+        const effectiveMode = theme.mode === 'system'
+            ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+            : theme.mode;
+
+        docEl.setAttribute('data-theme', effectiveMode);
+        docEl.setAttribute('data-density', theme.density);
+        docEl.setAttribute('data-board-bg', theme.boardBackground);
+        docEl.setAttribute('data-reduced-motion', String(theme.reducedMotion));
+        docEl.setAttribute('data-board-width', theme.boardWidth);
+        
+        docEl.style.setProperty('--radius', `${theme.radius}px`);
+        docEl.style.setProperty('--color-primary', theme.sourceColor);
+        docEl.style.fontSize = `${16.5 * theme.fontScale}px`;
+        
+        const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+        if (theme.reducedMotion && !reducedMotionQuery.matches) {
+            docEl.setAttribute('data-reduced-motion', 'true');
+        } else if (reducedMotionQuery.matches) {
+            docEl.setAttribute('data-reduced-motion', 'true');
+        } else {
+             docEl.setAttribute('data-reduced-motion', 'false');
+        }
+
+    }, [theme]);
+
+    useEffect(() => {
+        localStorage.setItem('mosaic.customCss', JSON.stringify(customCss));
+        const styleId = 'mosaic-custom-styles';
+        let styleEl = document.getElementById(styleId);
+        if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = styleId;
+            document.head.appendChild(styleEl);
+        }
+        const cssString = Object.entries(customCss)
+            .map(([selector, rules]) => {
+                if (rules && rules.trim()) return `${selector} { ${rules} }`;
+                return '';
+            })
+            .join('\n');
+        styleEl.innerHTML = cssString;
+    }, [customCss]);
+
+    useEffect(() => {
+        const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+        const handleChange = (e: MediaQueryListEvent) => {
+            if (theme.mode === 'system') {
+                document.documentElement.setAttribute('data-theme', e.matches ? 'dark' : 'light');
+            }
+        };
+
+        mediaQuery.addEventListener('change', handleChange);
+        return () => mediaQuery.removeEventListener('change', handleChange);
+    }, [theme.mode]);
+
+    return { theme, updateTheme, resetTheme, exportTheme, importTheme, customCss, updateCustomCss };
+};
+
+
+// --- Data Types ---
+interface LabelData {
   id: string;
   text: string;
-  labels?: string[];
-  members?: string[];
-  description?: string;
-  comments?: Comment[];
-  dueDate?: { timestamp: number; completed: boolean };
-  startDate?: { timestamp: number };
-  location?: string;
-  checklists?: Checklist[];
-  attachments?: Attachment[];
-  cover?: {
-    type: 'color' | 'image';
-    value: string;
-    size: 'normal' | 'full';
-  };
-  customFields?: { [key: string]: any };
-  linkedCards?: string[];
-  watching?: boolean;
+  color: string;
 }
 
-interface List {
+// --- New Auth & Role Data Types ---
+type Role = 'owner' | 'admin' | 'member' | 'viewer';
+
+interface UserData {
+  id: string;
+  name: string;
+  email: string;
+  passwordHash: string; // In a real app, this would be a secure hash
+  avatarUrl?: string;
+}
+
+interface BoardMember {
+    userId: string;
+    role: Role;
+}
+
+interface MemberData {
+  id: string;
+  name: string;
+  avatarUrl?: string;
+}
+
+interface ChecklistItemData {
+  id: string;
+  text: string;
+  completed: boolean;
+  attachments?: AttachmentData[];
+}
+
+interface ChecklistData {
   id: string;
   title: string;
-  cards: Card[];
+  items: ChecklistItemData[];
 }
 
-interface Comment {
+interface AttachmentData {
+  id: string;
+  url?: string; // Will be data URL for file uploads, optional for storage
+  name: string;
+  timestamp: number;
+  type: 'link' | 'file';
+  previewUrl?: string; // For image previews, optional for storage
+}
+
+interface CoverData {
+    color?: string;
+    imageUrl?: string;
+    size?: 'normal' | 'full';
+}
+
+interface CommentData {
   id: string;
   authorId: string;
   text: string;
   timestamp: number;
-  attachments?: Attachment[];
+  attachments?: AttachmentData[];
 }
 
-interface ChecklistItem {
+interface ActivityData {
   id: string;
   text: string;
-  completed: boolean;
-  attachments?: Attachment[];
+  timestamp: number;
 }
 
-interface Checklist {
+interface CustomFieldDefinition {
+    id: string;
+    name: string;
+    type: 'text' | 'number' | 'dropdown' | 'date' | 'checkbox';
+    options?: string[]; // for dropdown
+}
+
+interface CardData {
+  id: string;
+  cardShortId: number;
+  text: string; // This is the title
+  description: string;
+  comments: CommentData[];
+  activity: ActivityData[];
+  labels: string[]; // array of label IDs
+  members: string[]; // array of member IDs
+  dueDate: { timestamp: number | null; completed: boolean };
+  startDate: number | null;
+  location: string;
+  checklists: ChecklistData[];
+  attachments: AttachmentData[];
+  cover: CoverData;
+  subscribers: string[]; // array of member IDs watching the card
+  customFields: { [key: string]: string | number | boolean | null };
+  linkedCards: string[];
+}
+
+interface ListData {
   id: string;
   title: string;
-  items: ChecklistItem[];
+  cards: CardData[];
 }
 
-interface Attachment {
-  id: string;
-  name: string;
-  url: string;
-  type: 'file' | 'link';
-  size?: number;
-  uploadedAt: number;
+interface Filters {
+    query: string;
+    members: string[];
+    labels: string[];
+    dueDate: string;
 }
 
-interface Label {
-  id: string;
-  name: string;
-  color: string;
+interface NotificationData {
+    id: string;
+    text: string;
+    cardId: string;
+    listId: string;
+    timestamp: number;
+    read: boolean;
 }
 
-interface Member {
-  id: string;
-  name: string;
-  avatar: string;
-  initials: string;
-}
+// --- Automation Data Types ---
+type AutomationTrigger =
+  | { type: 'card-move'; toListId: string }
+  | { type: 'label-add'; labelId: string };
 
-interface CustomField {
-  id: string;
-  name: string;
-  type: 'text' | 'number' | 'date' | 'dropdown' | 'checkbox';
-  options?: string[];
-}
+type AutomationAction =
+  | { type: 'move-to-list'; listId: string }
+  | { type: 'set-due-date-complete'; completed: boolean }
+  | { type: 'add-checklist'; title: string }
+  | { type: 'post-comment'; text: string }
+  | { type: 'add-member'; memberId: string }
+  | { type: 'add-label'; labelId: string };
 
 interface AutomationRule {
   id: string;
   name: string;
-  trigger: {
-    type: 'card_moved' | 'due_date_approaching' | 'member_assigned' | 'label_added';
-    conditions: any;
-  };
-  actions: {
-    type: 'mark_due_complete' | 'add_label' | 'assign_member' | 'move_card' | 'send_notification';
-    params: any;
-  }[];
-  enabled: boolean;
+  trigger: AutomationTrigger;
+  action: AutomationAction;
 }
 
-// Default theme
-const defaultTheme: Theme = {
-  mode: 'system',
-  accent: '#0079BF',
-  radius: 10,
-  density: 'comfortable',
-  fontScale: 1.0,
-  reducedMotion: false,
-  boardBackground: 'none'
+interface ScheduledCommand {
+    id: string;
+    name: string;
+    schedule: 'daily' | 'weekly';
+    action: AutomationAction;
+    targetListId: string;
+}
+
+interface CustomButtonData {
+    id: string;
+    name: string;
+    action: AutomationAction;
+}
+
+interface Automations {
+    rules: AutomationRule[];
+    scheduled: ScheduledCommand[];
+    cardButtons: CustomButtonData[];
+    boardButtons: CustomButtonData[];
+}
+
+
+// --- Mock Data & Constants ---
+const AVAILABLE_LABELS_DATA: LabelData[] = [
+    { id: 'label-1', text: 'Feature', color: '#61BD4F' },
+    { id: 'label-2', text: 'Bug', color: '#EB5A46' },
+    { id: 'label-3', text: 'Design', color: '#F2D600' },
+    { id: 'label-4', text: 'Docs', color: '#0079BF' },
+    { id: 'label-5', text: 'Research', color: '#FF9F1A' },
+];
+
+const INITIAL_USERS: UserData[] = [
+    { id: 'user-1', name: 'Alice', email: 'alice@example.com', passwordHash: 'password', avatarUrl: `https://i.pravatar.cc/150?u=user-1` },
+    { id: 'user-2', name: 'Bob', email: 'bob@example.com', passwordHash: 'password', avatarUrl: `https://i.pravatar.cc/150?u=user-2` },
+    { id: 'user-3', name: 'Charlie', email: 'charlie@example.com', passwordHash: 'password', avatarUrl: `https://i.pravatar.cc/150?u=user-3` },
+];
+
+const INITIAL_BOARD_MEMBERS: BoardMember[] = [
+    { userId: 'user-1', role: 'owner' },
+    { userId: 'user-2', role: 'admin' },
+    { userId: 'user-3', role: 'member' },
+];
+
+
+// --- Helper Functions ---
+const generateId = () => `id-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+const createTimestamp = () => Date.now();
+
+const createActivity = (text: string): ActivityData => ({
+  id: generateId(),
+  text,
+  timestamp: createTimestamp(),
+});
+
+const getDueDateStatus = (dueDate: { timestamp: number | null; completed: boolean }) => {
+    if (!dueDate || !dueDate.timestamp) return 'none';
+    if (dueDate.completed) return 'complete';
+    const now = Date.now();
+    const dueTime = dueDate.timestamp;
+    const oneDay = 24 * 60 * 60 * 1000;
+    if (dueTime < now) return 'overdue';
+    if (dueTime < now + oneDay) return 'due-soon';
+    return 'none';
 };
 
-// Theme management functions
-const loadTheme = (): Theme => {
-  try {
-    const stored = localStorage.getItem('mosaic.theme');
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      // Ensure boardBackground is a valid enum value
-      if (parsed.boardBackground && !['none', 'dots', 'grid', 'noise', 'nebula'].includes(parsed.boardBackground)) {
-        parsed.boardBackground = 'none';
-      }
-      return { ...defaultTheme, ...parsed };
-    }
-  } catch (error) {
-    console.warn('Failed to load theme from localStorage:', error);
-  }
-  return defaultTheme;
+const fileToAttachment = (file: File): Promise<AttachmentData> => {
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const newAttachment: AttachmentData = {
+                id: generateId(),
+                url: event.target?.result as string,
+                name: file.name,
+                timestamp: createTimestamp(),
+                type: 'file',
+                previewUrl: file.type.startsWith('image/') ? (event.target?.result as string) : undefined
+            };
+            resolve(newAttachment);
+        };
+        reader.readAsDataURL(file);
+    });
 };
 
-const saveTheme = (theme: Theme): void => {
-  // Create a clean theme object with only the essential data
-  const cleanTheme: Theme = {
-    mode: theme.mode,
-    accent: theme.accent,
-    radius: theme.radius,
-    density: theme.density,
-    fontScale: theme.fontScale,
-    reducedMotion: theme.reducedMotion,
-    boardBackground: theme.boardBackground // Only store the enum value, not CSS
+/**
+ * Sanitizes board data to remove large base64 strings before saving to localStorage.
+ */
+const getSanitizedBoardDataForStorage = (data: ListData[]): ListData[] => {
+    const sanitizeAttachments = (attachments: AttachmentData[] = []): AttachmentData[] => {
+        return attachments.map(att => {
+            if (att.type === 'file') {
+                // Return a new object without the large data fields
+                return {
+                    id: att.id,
+                    name: att.name,
+                    timestamp: att.timestamp,
+                    type: att.type,
+                };
+            }
+            return att;
+        });
+    };
+
+    return data.map(list => ({
+        ...list,
+        cards: list.cards.map(card => {
+            const sanitizedCard = {
+                ...card,
+                attachments: sanitizeAttachments(card.attachments),
+                comments: (card.comments || []).map(comment => ({
+                    ...comment,
+                    attachments: sanitizeAttachments(comment.attachments),
+                })),
+                checklists: (card.checklists || []).map(checklist => ({
+                    ...checklist,
+                    items: (checklist.items || []).map(item => ({
+                        ...item,
+                        attachments: sanitizeAttachments(item.attachments),
+                    })),
+                })),
+            };
+
+            // Also sanitize the cover image if it's a data URL from a file upload
+            if (sanitizedCard.cover?.imageUrl?.startsWith('data:image')) {
+                sanitizedCard.cover = { ...sanitizedCard.cover, imageUrl: undefined };
+            }
+
+            return sanitizedCard;
+        }),
+    }));
+};
+
+// --- Permissions Hook ---
+const usePermissions = (user: UserData | null, members: BoardMember[]) => {
+    const role = members.find(m => m.userId === user?.id)?.role;
+    return useMemo(() => ({
+        role,
+        isOwner: role === 'owner',
+        isAdmin: role === 'owner' || role === 'admin',
+        isMember: role === 'owner' || role === 'admin' || role === 'member',
+        isViewer: role === 'viewer',
+        canEditBoard: role === 'owner' || role === 'admin' || role === 'member',
+        canEditCard: role === 'owner' || role === 'admin' || role === 'member',
+        canDeleteCard: role === 'owner' || role === 'admin' || role === 'member',
+        canComment: role === 'owner' || role === 'admin' || role === 'member',
+        canManageSettings: role === 'owner' || role === 'admin',
+        canManageMembers: role === 'owner' || role === 'admin',
+    }), [user, members, role]);
+};
+
+
+// --- Prop Types ---
+interface CardProps {
+  card: CardData;
+  isHidden: boolean;
+  canEdit: boolean;
+  onDragStart: (e: React.DragEvent) => void;
+  onDragEnd: (e: React.DragEvent) => void;
+  onClick: () => void;
+}
+
+interface ListProps {
+  list: ListData;
+  listIndex: number;
+  permissions: ReturnType<typeof usePermissions>;
+  visibilityMap: { [cardId: string]: boolean };
+  onUpdateListTitle: (listIndex: number, newTitle: string) => void;
+  onDeleteList: (listIndex: number) => void;
+  onAddCard: (listIndex: number, text: string) => void;
+  onCardClick: (listIndex: number, cardIndex: number) => void;
+  moveCard: (sourceListIndex: number, sourceCardIndex: number, destListIndex: number, destCardIndex: number) => void;
+  lastMovedCard: {id: string, direction: 'left' | 'right'} | null;
+}
+
+
+// --- Components ---
+
+/**
+ * Icon Component
+ */
+interface IconProps {
+  name: string;
+  style?: 'outlined' | 'rounded' | 'sharp';
+  size?: number;
+  color?: string;
+  title?: string;
+  className?: string;
+}
+
+const Icon: React.FC<IconProps> = ({ name, style = 'outlined', size = 24, color, title, className = '' }) => {
+  const familyClass = style === 'rounded' ? 'rounded' : style === 'sharp' ? 'sharp' : '';
+  const inlineStyles: React.CSSProperties = {
+    fontSize: `${size}px`,
+    fontVariationSettings: `'opsz' ${size}`,
   };
-  
-  try {
-    localStorage.setItem('mosaic.theme', JSON.stringify(cleanTheme));
-  } catch (error) {
-    console.error('Failed to save theme to localStorage:', error);
+  if (color) {
+    inlineStyles.color = color;
   }
-};
-
-const applyThemeToDOM = (theme: Theme): void => {
-  const root = document.documentElement;
-  
-  // Apply theme mode
-  if (theme.mode === 'system') {
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    root.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
-  } else {
-    root.setAttribute('data-theme', theme.mode);
-  }
-  
-  // Apply other theme properties
-  root.setAttribute('data-density', theme.density);
-  root.setAttribute('data-reduced-motion', theme.reducedMotion.toString());
-  root.setAttribute('data-board-bg', theme.boardBackground);
-  
-  // Apply CSS custom properties
-  root.style.setProperty('--radius', `${theme.radius}px`);
-  root.style.fontSize = `${16.5 * theme.fontScale}px`;
-  
-  // Apply Material Design color scheme
-  try {
-    const sourceColor = argbFromHex(theme.accent);
-    const materialTheme = themeFromSourceColor(sourceColor);
-    const isDark = root.getAttribute('data-theme') === 'dark';
-    const scheme = isDark ? materialTheme.schemes.dark : materialTheme.schemes.light;
-    
-    applyTheme(materialTheme, { target: root, dark: isDark });
-    root.style.setProperty('--color-primary', theme.accent);
-  } catch (error) {
-    console.warn('Failed to apply Material Design colors:', error);
-    root.style.setProperty('--color-primary', theme.accent);
-  }
-};
-
-// Sample data
-const sampleLabels: Label[] = [
-  { id: 'label-1', name: 'Feature', color: '#61BD4F' },
-  { id: 'label-2', name: 'Bug', color: '#EB5A46' },
-  { id: 'label-3', name: 'Design', color: '#C377E0' },
-  { id: 'label-4', name: 'High Priority', color: '#F2D600' },
-  { id: 'label-5', name: 'Research', color: '#FF9F1A' },
-  { id: 'label-6', name: 'Documentation', color: '#0079BF' }
-];
-
-const sampleMembers: Member[] = [
-  { id: 'member-1', name: 'Alex Chen', avatar: 'https://images.pexels.com/photos/2379004/pexels-photo-2379004.jpeg?auto=compress&cs=tinysrgb&w=150&h=150&fit=crop', initials: 'AC' },
-  { id: 'member-2', name: 'Sarah Johnson', avatar: 'https://images.pexels.com/photos/1239291/pexels-photo-1239291.jpeg?auto=compress&cs=tinysrgb&w=150&h=150&fit=crop', initials: 'SJ' },
-  { id: 'member-3', name: 'Mike Rodriguez', avatar: 'https://images.pexels.com/photos/2182970/pexels-photo-2182970.jpeg?auto=compress&cs=tinysrgb&w=150&h=150&fit=crop', initials: 'MR' },
-  { id: 'member-4', name: 'Emily Davis', avatar: 'https://images.pexels.com/photos/1181686/pexels-photo-1181686.jpeg?auto=compress&cs=tinysrgb&w=150&h=150&fit=crop', initials: 'ED' }
-];
-
-const sampleCustomFields: CustomField[] = [
-  { id: 'field-1', name: 'Priority', type: 'dropdown', options: ['Low', 'Medium', 'High', 'Critical'] },
-  { id: 'field-2', name: 'Story Points', type: 'number' },
-  { id: 'field-3', name: 'Epic', type: 'text' },
-  { id: 'field-4', name: 'Ready for Review', type: 'checkbox' }
-];
-
-const initialLists: List[] = [
-  {
-    id: 'list-1',
-    title: 'Website Redesign',
-    cards: [
-      {
-        id: 'card-1',
-        text: 'Research competitor websites',
-        labels: ['label-5'],
-        members: ['member-1'],
-        description: 'Analyze top 5 competitor websites to understand current design trends and user experience patterns.',
-        dueDate: { timestamp: Date.now() + 7 * 24 * 60 * 60 * 1000, completed: false },
-        checklists: [
-          {
-            id: 'checklist-1',
-            title: 'Research Tasks',
-            items: [
-              { id: 'item-1', text: 'Identify top 5 competitors', completed: true },
-              { id: 'item-2', text: 'Screenshot key pages', completed: false },
-              { id: 'item-3', text: 'Document design patterns', completed: false }
-            ]
-          }
-        ],
-        customFields: { 'field-1': 'High', 'field-2': 5 }
-      },
-      {
-        id: 'card-2',
-        text: 'Create wireframes for homepage',
-        labels: ['label-3'],
-        members: ['member-2'],
-        cover: {
-          type: 'image',
-          value: 'https://images.pexels.com/photos/196644/pexels-photo-196644.jpeg?auto=compress&cs=tinysrgb&w=400&h=200&fit=crop',
-          size: 'normal'
-        },
-        customFields: { 'field-1': 'Medium', 'field-2': 8 }
-      },
-      {
-        id: 'card-3',
-        text: 'Design system documentation',
-        labels: ['label-6', 'label-3'],
-        members: ['member-1', 'member-2'],
-        cover: {
-          type: 'color',
-          value: '#C377E0',
-          size: 'normal'
-        },
-        customFields: { 'field-1': 'Low', 'field-2': 3 }
-      }
-    ]
-  },
-  {
-    id: 'list-2',
-    title: 'Q2 Features',
-    cards: [
-      {
-        id: 'card-4',
-        text: 'Implement dark mode toggle',
-        labels: ['label-1'],
-        members: ['member-3'],
-        description: 'Add a toggle switch in the header to allow users to switch between light and dark themes.',
-        startDate: { timestamp: Date.now() },
-        dueDate: { timestamp: Date.now() + 14 * 24 * 60 * 60 * 1000, completed: false },
-        customFields: { 'field-1': 'High', 'field-2': 13 }
-      },
-      {
-        id: 'card-5',
-        text: 'Add user profile settings',
-        labels: ['label-1'],
-        members: ['member-4'],
-        cover: {
-          type: 'image',
-          value: 'https://images.pexels.com/photos/574071/pexels-photo-574071.jpeg?auto=compress&cs=tinysrgb&w=400&h=200&fit=crop',
-          size: 'full'
-        },
-        customFields: { 'field-1': 'Medium', 'field-2': 8 }
-      }
-    ]
-  },
-  {
-    id: 'list-3',
-    title: 'Done',
-    cards: [
-      {
-        id: 'card-6',
-        text: 'Set up project repository',
-        labels: ['label-1'],
-        members: ['member-1'],
-        dueDate: { timestamp: Date.now() - 2 * 24 * 60 * 60 * 1000, completed: true },
-        customFields: { 'field-1': 'High', 'field-2': 2, 'field-4': true }
-      }
-    ]
-  }
-];
-
-// Main App Component
-const App: React.FC = () => {
-  const [theme, setTheme] = useState<Theme>(loadTheme);
-  const [lists, setLists] = useState<List[]>(initialLists);
-  const [currentView, setCurrentView] = useState<'board' | 'calendar' | 'timeline' | 'table' | 'dashboard' | 'map'>('board');
-  const [selectedCard, setSelectedCard] = useState<Card | null>(null);
-  const [showSettings, setShowSettings] = useState(false);
-  const [showShare, setShowShare] = useState(false);
-  const [showAutomation, setShowAutomation] = useState(false);
-  const [showElementCustomizer, setShowElementCustomizer] = useState(false);
-  const [filterState, setFilterState] = useState({
-    keyword: '',
-    members: [] as string[],
-    labels: [] as string[],
-    dueDateFilter: 'all' as 'all' | 'overdue' | 'due-soon' | 'no-due-date'
-  });
-  const [automationRules, setAutomationRules] = useState<AutomationRule[]>([]);
-
-  // Apply theme on mount and when theme changes
-  useEffect(() => {
-    applyThemeToDOM(theme);
-    saveTheme(theme);
-  }, [theme]);
-
-  // Listen for system theme changes
-  useEffect(() => {
-    if (theme.mode === 'system') {
-      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-      const handleChange = () => applyThemeToDOM(theme);
-      mediaQuery.addEventListener('change', handleChange);
-      return () => mediaQuery.removeEventListener('change', handleChange);
-    }
-  }, [theme.mode]);
 
   return (
-    <div id="root">
-      <header>
-        <h1>MosaicBoard</h1>
-        <div className="header-center">
-          <div className="view-switcher">
-            <button 
-              className={currentView === 'board' ? 'active' : ''}
-              onClick={() => setCurrentView('board')}
-            >
-              Board
-            </button>
-            <button 
-              className={currentView === 'calendar' ? 'active' : ''}
-              onClick={() => setCurrentView('calendar')}
-            >
-              Calendar
-            </button>
-          </div>
-        </div>
-        <div className="header-right">
-          <button className="header-btn" onClick={() => setShowSettings(true)}>
-            <span className="icon">settings</span>
-            Settings
-          </button>
-        </div>
-      </header>
-      
-      <main className={`main-container view-${currentView}`}>
-        {currentView === 'board' && (
-          <div className="board">
-            {lists.map(list => (
-              <div key={list.id} className="list-container">
-                <div className="list-header">
-                  <input 
-                    className="list-title"
-                    value={list.title}
-                    readOnly
-                  />
-                </div>
-                <div className="cards-container">
-                  {list.cards.map(card => (
-                    <div key={card.id} className="card" onClick={() => setSelectedCard(card)}>
-                      {card.cover && (
-                        <>
-                          {card.cover.type === 'image' && (
-                            <img 
-                              src={card.cover.value} 
-                              alt="" 
-                              className="card-cover-image"
-                            />
-                          )}
-                          {card.cover.type === 'color' && (
-                            <div 
-                              className="card-cover-color"
-                              style={{ backgroundColor: card.cover.value }}
-                            />
-                          )}
-                        </>
-                      )}
-                      <div className={card.cover ? 'card-content-wrapper' : ''}>
-                        {card.labels && card.labels.length > 0 && (
-                          <div className="card-labels">
-                            {card.labels.map(labelId => {
-                              const label = sampleLabels.find(l => l.id === labelId);
-                              return label ? (
-                                <div 
-                                  key={labelId}
-                                  className="card-label"
-                                  style={{ backgroundColor: label.color }}
-                                />
-                              ) : null;
-                            })}
-                          </div>
-                        )}
-                        <p className="card-text">{card.text}</p>
-                        <div className="card-footer">
-                          <div className="card-badges">
-                            {card.dueDate && (
-                              <span className={`card-badge due-date-badge ${card.dueDate.completed ? 'complete' : ''}`}>
-                                <span className="icon">schedule</span>
-                                {new Date(card.dueDate.timestamp).toLocaleDateString()}
-                              </span>
-                            )}
-                            {card.checklists && card.checklists.length > 0 && (
-                              <span className="card-badge checklist-badge">
-                                <span className="icon">checklist</span>
-                                {card.checklists.reduce((total, cl) => total + cl.items.filter(i => i.completed).length, 0)}/
-                                {card.checklists.reduce((total, cl) => total + cl.items.length, 0)}
-                              </span>
-                            )}
-                          </div>
-                          {card.members && card.members.length > 0 && (
-                            <div className="card-members">
-                              {card.members.map(memberId => {
-                                const member = sampleMembers.find(m => m.id === memberId);
-                                return member ? (
-                                  <img 
-                                    key={memberId}
-                                    src={member.avatar}
-                                    alt={member.name}
-                                    className="member-avatar"
-                                    title={member.name}
-                                  />
-                                ) : null;
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-        
-        {currentView !== 'board' && (
-          <div className="view-container">
-            <p>View: {currentView}</p>
-            <p>This view is not yet implemented in this minimal version.</p>
-          </div>
-        )}
-      </main>
+    <span
+      className={`icon ${familyClass} ${className}`}
+      style={inlineStyles}
+      role={title ? "img" : undefined}
+      aria-label={title ? title : undefined}
+      aria-hidden={!title}
+    >
+      {name}
+    </span>
+  );
+};
 
-      {/* Settings Modal */}
-      {showSettings && (
-        <div className="modal-overlay" onClick={() => setShowSettings(false)}>
-          <div className="modal settings-modal" onClick={e => e.stopPropagation()}>
-            <button className="modal-close-btn" onClick={() => setShowSettings(false)}>
-              <span className="icon">close</span>
-            </button>
-            <div className="modal-header">
-              <h2 className="modal-title no-edit">Settings</h2>
+/**
+ * Popover Component
+ */
+const Popover = ({ trigger, children, onClose }) => {
+    const popoverRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (popoverRef.current && !popoverRef.current.contains(event.target)) {
+                onClose();
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [onClose]);
+
+    return (
+        <div className="popover-container">
+            {trigger}
+            <div className="popover" ref={popoverRef}>
+                {children}
             </div>
-            <div className="settings-body">
-              <div className="settings-sidebar">
-                <button className="active">
-                  <span className="icon">palette</span>
-                  Appearance
-                </button>
-              </div>
-              <div className="settings-content">
-                <h4>Appearance</h4>
-                <div className="appearance-settings">
-                  <div className="appearance-controls">
-                    <div className="setting-item">
-                      <h5>Theme Mode</h5>
-                      <div className="segmented-control">
-                        <label>
-                          <input 
-                            type="radio" 
-                            name="mode" 
-                            value="system"
-                            checked={theme.mode === 'system'}
-                            onChange={(e) => setTheme(prev => ({ ...prev, mode: e.target.value as Theme['mode'] }))}
-                          />
-                          <span>System</span>
-                        </label>
-                        <label>
-                          <input 
-                            type="radio" 
-                            name="mode" 
-                            value="light"
-                            checked={theme.mode === 'light'}
-                            onChange={(e) => setTheme(prev => ({ ...prev, mode: e.target.value as Theme['mode'] }))}
-                          />
-                          <span>Light</span>
-                        </label>
-                        <label>
-                          <input 
-                            type="radio" 
-                            name="mode" 
-                            value="dark"
-                            checked={theme.mode === 'dark'}
-                            onChange={(e) => setTheme(prev => ({ ...prev, mode: e.target.value as Theme['mode'] }))}
-                          />
-                          <span>Dark</span>
-                        </label>
-                      </div>
-                    </div>
-                    
-                    <div className="setting-item">
-                      <h5>Accent Color</h5>
-                      <div className="accent-picker">
-                        <input
-                          type="color"
-                          value={theme.accent}
-                          onChange={(e) => setTheme(prev => ({ ...prev, accent: e.target.value }))}
-                          className="accent-swatch custom"
-                        />
-                        <div className="custom-color-details">
-                          <span>Custom Color</span>
-                          <span>{theme.accent}</span>
-                        </div>
-                      </div>
-                    </div>
+        </div>
+    );
+};
 
-                    <div className="setting-item">
-                      <h5>Board Background</h5>
-                      <div className="background-picker">
-                        {(['none', 'dots', 'grid', 'noise', 'nebula'] as const).map(bg => (
-                          <div
-                            key={bg}
-                            className={`background-tile ${bg === 'none' ? '' : `bg-tile-${bg}`} ${theme.boardBackground === bg ? 'active' : ''}`}
-                            onClick={() => setTheme(prev => ({ ...prev, boardBackground: bg }))}
-                          >
-                            <span>{bg === 'none' ? 'None' : bg.charAt(0).toUpperCase() + bg.slice(1)}</span>
-                          </div>
+const FilterPopover = ({ filters, onFiltersChange, onClose, availableLabels, availableMembers }) => {
+    const queryInputRef = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+        queryInputRef.current?.focus();
+    }, []);
+
+    const handleQueryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        onFiltersChange({ ...filters, query: e.target.value });
+    };
+
+    const handleMemberToggle = (memberId: string) => {
+        const newMembers = filters.members.includes(memberId)
+            ? filters.members.filter(id => id !== memberId)
+            : [...filters.members, memberId];
+        onFiltersChange({ ...filters, members: newMembers });
+    };
+    
+    const handleLabelToggle = (labelId: string) => {
+        const newLabels = filters.labels.includes(labelId)
+            ? filters.labels.filter(id => id !== labelId)
+            : [...filters.labels, labelId];
+        onFiltersChange({ ...filters, labels: newLabels });
+    };
+
+    const handleDueDateChange = (status: string) => {
+        onFiltersChange({ ...filters, dueDate: status });
+    };
+    
+    const clearFilters = () => {
+        onFiltersChange({ query: '', members: [], labels: [], dueDate: 'any' });
+    };
+
+    return (
+        <Popover onClose={onClose} trigger={null}>
+            <div className="filter-popover" data-component-name="Filter Popover" data-component-description="Allows users to filter the visible cards on the board by keyword, member, label, or due date.">
+                <h4>Filter Cards</h4>
+                <div className="filter-section">
+                    <h5>Keyword</h5>
+                    <input ref={queryInputRef} type="text" className="popover-input" value={filters.query} onChange={handleQueryChange} placeholder="Search titles & descriptions..." />
+                </div>
+                <div className="filter-section">
+                    <h5>Members</h5>
+                    <div className="filter-options">
+                        <label className="filter-option">
+                            <input type="checkbox" checked={filters.members.includes('no-members')} onChange={() => handleMemberToggle('no-members')} />
+                            <span>No members</span>
+                        </label>
+                        {availableMembers.map(member => (
+                            <label key={member.id} className="filter-option">
+                                <input type="checkbox" checked={filters.members.includes(member.id)} onChange={() => handleMemberToggle(member.id)} />
+                                <img src={member.avatarUrl} alt={member.name} className="member-avatar" />
+                                <span>{member.name}</span>
+                            </label>
                         ))}
-                      </div>
                     </div>
-                  </div>
                 </div>
-              </div>
+                <div className="filter-section">
+                    <h5>Labels</h5>
+                     <div className="filter-options">
+                        <label className="filter-option">
+                            <input type="checkbox" checked={filters.labels.includes('no-labels')} onChange={() => handleLabelToggle('no-labels')} />
+                            <span>No labels</span>
+                        </label>
+                        {availableLabels.map(label => (
+                             <label key={label.id} className="filter-option">
+                                <input type="checkbox" checked={filters.labels.includes(label.id)} onChange={() => handleLabelToggle(label.id)} />
+                                <span className="card-label" style={{ backgroundColor: label.color }} />
+                                <span>{label.text}</span>
+                            </label>
+                        ))}
+                    </div>
+                </div>
+                 <div className="filter-section">
+                    <h5>Due Date</h5>
+                     <div className="filter-options column">
+                        {['any', 'none', 'overdue', 'due-soon', 'complete'].map(status => (
+                            <label key={status} className="filter-option">
+                                <input type="radio" name="due-date" value={status} checked={filters.dueDate === status} onChange={() => handleDueDateChange(status)} />
+                                <span>{status.charAt(0).toUpperCase() + status.slice(1).replace('-', ' ')}</span>
+                            </label>
+                        ))}
+                    </div>
+                </div>
+                <button className="sidebar-btn delete" onClick={clearFilters}><Icon name="close" size={18}/>Clear All Filters</button>
             </div>
-          </div>
-        </div>
-      )}
+        </Popover>
+    );
+};
 
-      {/* Card Modal */}
-      {selectedCard && (
-        <div className="modal-overlay" onClick={() => setSelectedCard(null)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <button className="modal-close-btn" onClick={() => setSelectedCard(null)}>
-              <span className="icon">close</span>
-            </button>
-            <div className="modal-header">
-              <h2 className="modal-title">{selectedCard.text}</h2>
-              <p className="modal-subtitle">
-                in list <strong>Website Redesign</strong>
-                <span className="card-short-id">#{selectedCard.id.split('-')[1]}</span>
-              </p>
-            </div>
-            <div className="modal-body">
-              <div className="modal-main-col">
-                {selectedCard.description && (
-                  <div className="modal-section">
-                    <h3>Description</h3>
-                    <p>{selectedCard.description}</p>
-                  </div>
-                )}
+
+/**
+ * Card Component
+ */
+const Card = ({ card, isHidden, canEdit, onDragStart, onDragEnd, onClick, availableLabels, availableMembers, animationClass = '' }: CardProps & { availableLabels: LabelData[], availableMembers: MemberData[], animationClass?: string }) => {
+  const { cover, text, labels, dueDate, checklists, attachments, members, comments } = card;
+  const checklistStats = checklists.reduce((acc, c) => {
+      acc.total += c.items.length;
+      acc.completed += c.items.filter(i => i.completed).length;
+      return acc;
+  }, { total: 0, completed: 0 });
+  const dueDateStatus = getDueDateStatus(dueDate);
+  
+  const hasImageCover = !!cover.imageUrl;
+  const hasColorCover = !!cover.color;
+  const showCover = hasImageCover || hasColorCover;
+  const isFullCover = hasImageCover && cover.size === 'full';
+
+  return (
+    <div
+      className={`card ${isHidden ? 'is-hidden' : ''} ${showCover ? 'has-cover' : ''} ${hasImageCover ? 'has-image-cover' : ''} ${isFullCover ? 'is-full-cover' : ''} ${animationClass}`}
+      draggable={canEdit}
+      onDragStart={canEdit ? onDragStart : undefined}
+      onDragEnd={canEdit ? onDragEnd : undefined}
+      onClick={onClick}
+      data-component-name="Card"
+      data-component-description="Represents a single task or item. It's draggable and displays summary information."
+    >
+      {hasImageCover && <img src={cover.imageUrl} className="card-cover-image" alt="" />}
+      {hasColorCover && <div className="card-cover-color" style={{ backgroundColor: cover.color }} />}
+      {hasImageCover && hasColorCover && <div className="card-cover-overlay" style={{ backgroundColor: cover.color }} />}
+
+      <div className="card-content-wrapper">
+        <div className="card-content-main">
+            {labels.length > 0 && (
+              <div className="card-labels">
+                {labels.map(labelId => {
+                    const label = availableLabels.find(l => l.id === labelId);
+                    return label ? <span key={label.id} className="card-label" style={{ backgroundColor: label.color }} title={label.text} /> : null;
+                })}
               </div>
-              <div className="modal-sidebar">
-                <h3>Actions</h3>
-                <button className="sidebar-btn">
-                  <span className="icon">person_add</span>
-                  Members
-                </button>
-                <button className="sidebar-btn">
-                  <span className="icon">label</span>
-                  Labels
-                </button>
-                <button className="sidebar-btn">
-                  <span className="icon">schedule</span>
-                  Dates
-                </button>
-              </div>
-            </div>
+            )}
+            <p className="card-text">{text}</p>
+        </div>
+        <div className="card-footer">
+          <div className="card-badges">
+            {dueDate.timestamp && (
+              <span className={`card-badge due-date-badge ${dueDateStatus}`}>
+                <Icon name="schedule" size={16} />
+                {new Date(dueDate.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              </span>
+            )}
+            {checklistStats.total > 0 && (
+              <span className={`card-badge checklist-badge ${checklistStats.completed === checklistStats.total ? 'complete' : ''}`}>
+                <Icon name="check_box" size={16} /> {checklistStats.completed}/{checklistStats.total}
+              </span>
+            )}
+            {attachments.length > 0 && <span className="card-badge"><Icon name="attachment" size={16} /> {attachments.length}</span>}
+            {comments.length > 0 && <span className="card-badge"><Icon name="chat_bubble" size={16} /> {comments.length}</span>}
+          </div>
+          <div className="card-members">
+            {members.map(memberId => {
+              const member = availableMembers.find(m => m.id === memberId);
+              return member ? <img key={member.id} src={member.avatarUrl} alt={member.name} title={member.name} className="member-avatar" /> : null;
+            })}
           </div>
         </div>
+      </div>
+    </div>
+  );
+};
+
+
+/**
+ * AddItemForm Component
+ */
+const AddItemForm = ({ placeholder, buttonText, onSubmit, onCancel, multiline = false, className = '' }) => {
+    const [text, setText] = useState('');
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const inputRef = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+        if (multiline) {
+            textareaRef.current?.focus();
+        } else {
+            inputRef.current?.focus();
+        }
+    }, [multiline]);
+
+    useEffect(() => {
+        if (multiline && textareaRef.current) {
+            textareaRef.current.style.height = 'auto'; // Reset height
+            textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+        }
+    }, [text, multiline]);
+
+    const handleTextChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+        setText(e.target.value);
+    };
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (text.trim()) {
+            onSubmit(text);
+            setText('');
+        }
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            handleSubmit(e);
+        }
+    };
+
+    return (
+        <form onSubmit={handleSubmit} className={`add-form ${className}`} data-component-name="Add Item Form" data-component-description="A generic form for adding new items, such as cards or lists.">
+            {multiline ? (
+                <textarea
+                    ref={textareaRef}
+                    className="add-input"
+                    value={text}
+                    onChange={handleTextChange}
+                    placeholder={placeholder}
+                    onKeyDown={handleKeyDown}
+                    rows={3}
+                />
+            ) : (
+                <input
+                    ref={inputRef}
+                    type="text"
+                    className="add-input"
+                    value={text}
+                    onChange={handleTextChange}
+                    placeholder={placeholder}
+                />
+            )}
+            <div className="form-controls">
+                <button type="submit" className="action-button">{buttonText}</button>
+                <button type="button" className="cancel-button" onMouseDown={onCancel} aria-label="Cancel">
+                    <Icon name="close" size={20} />
+                </button>
+            </div>
+        </form>
+    );
+};
+
+const Checklist = ({ checklist, onUpdate, canEdit }) => {
+    const [newItemText, setNewItemText] = useState('');
+    const [attachingToItemId, setAttachingToItemId] = useState<string | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const progress = checklist.items.length > 0 ? (checklist.items.filter(i => i.completed).length / checklist.items.length) * 100 : 0;
+
+    const handleAddItem = (e: React.FormEvent<HTMLFormElement>) => {
+        e.preventDefault();
+        if (newItemText.trim() && canEdit) {
+            const newItem: ChecklistItemData = { id: generateId(), text: newItemText, completed: false, attachments: [] };
+            onUpdate({ ...checklist, items: [...checklist.items, newItem] });
+            setNewItemText('');
+        }
+    };
+    
+    const handleToggleItem = (itemId: string) => {
+      if (!canEdit) return;
+        const newItems = checklist.items.map(item =>
+            item.id === itemId ? { ...item, completed: !item.completed } : item
+        );
+        onUpdate({ ...checklist, items: newItems });
+    };
+
+    const handleAttachClick = (itemId: string) => {
+        if (!canEdit) return;
+        setAttachingToItemId(itemId);
+        fileInputRef.current?.click();
+    };
+
+    const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file && attachingToItemId && canEdit) {
+            const newAttachment = await fileToAttachment(file);
+            const newItems = checklist.items.map(item => {
+                if (item.id === attachingToItemId) {
+                    return { ...item, attachments: [...(item.attachments || []), newAttachment] };
+                }
+                return item;
+            });
+            onUpdate({ ...checklist, items: newItems });
+        }
+        setAttachingToItemId(null);
+        e.target.value = ''; // Reset file input
+    };
+
+    return (
+        <div className="checklist">
+            <h4>{checklist.title}</h4>
+            <div className="progress-bar-container">
+                <div className="progress-bar" style={{ width: `${progress}%` }}></div>
+            </div>
+            <div className="checklist-items">
+                {checklist.items.map(item => (
+                    <div key={item.id} className="checklist-item-wrapper">
+                        <div className="checklist-item">
+                            <input type="checkbox" checked={item.completed} onChange={() => handleToggleItem(item.id)} disabled={!canEdit}/>
+                            <span className={item.completed ? 'completed' : ''}>{item.text}</span>
+                            <button className="attach-to-item-btn" onClick={() => handleAttachClick(item.id)} aria-label="Attach file" disabled={!canEdit}><Icon name="attachment" size={16} /></button>
+                        </div>
+                        {item.attachments && item.attachments.length > 0 && (
+                            <div className="item-attachment-list">
+                                {item.attachments.map(att => {
+                                    if (att.type === 'file' && !att.url) {
+                                        return (
+                                            <div key={att.id} className="item-attachment is-unloaded" title="Local file attachments are not saved between sessions.">
+                                                <Icon name="draft" size={16} />
+                                                <span>{att.name}</span>
+                                            </div>
+                                        );
+                                    }
+                                    return (
+                                         <a key={att.id} href={att.url} target="_blank" rel="noopener noreferrer" className="item-attachment">
+                                            {att.previewUrl ? <img src={att.previewUrl} alt={att.name} /> : <Icon name="draft" size={16} />}
+                                            <span>{att.name}</span>
+                                         </a>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                ))}
+            </div>
+            {canEdit && <form className="add-checklist-item-form" onSubmit={handleAddItem}>
+                <input
+                    type="text"
+                    className="add-input"
+                    value={newItemText}
+                    onChange={(e) => setNewItemText(e.target.value)}
+                    placeholder="Add an item"
+                />
+                <button type="submit" className="action-button" disabled={!newItemText.trim()}>Add</button>
+                <input type="file" ref={fileInputRef} onChange={handleFileChange} style={{display: 'none'}} />
+            </form>}
+        </div>
+    );
+};
+
+
+const CommentForm = ({ onSubmit, availableMembers }) => {
+    const [text, setText] = useState('');
+    const [stagedAttachments, setStagedAttachments] = useState<AttachmentData[]>([]);
+    const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const EMOJIS = ['😀', '😂', '😍', '🤔', '👍', '🙏', '🎉', '🚀'];
+
+    const handleSubmit = (e) => {
+        e.preventDefault();
+        if (text.trim() || stagedAttachments.length > 0) {
+            onSubmit(text, stagedAttachments);
+            setText('');
+            setStagedAttachments([]);
+        }
+    };
+
+    const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files) {
+            const newAttachments = await Promise.all(
+                Array.from(e.target.files).map(fileToAttachment)
+            );
+            setStagedAttachments(prev => [...prev, ...newAttachments]);
+        }
+    };
+    
+    const removeStagedAttachment = (id: string) => {
+        setStagedAttachments(prev => prev.filter(att => att.id !== id));
+    };
+
+    const handleEmojiClick = (emoji) => {
+        setText(prev => prev + emoji);
+        setShowEmojiPicker(false);
+        textareaRef.current?.focus();
+    };
+    
+    return (
+        <form onSubmit={handleSubmit} className="comment-form">
+            <textarea
+                ref={textareaRef}
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                placeholder="Write a comment... use @ to mention"
+            />
+            {stagedAttachments.length > 0 && (
+                <div className="staged-attachments">
+                    {stagedAttachments.map(att => (
+                        <div key={att.id} className="staged-attachment">
+                           <span>{att.name}</span>
+                           <button type="button" onClick={() => removeStagedAttachment(att.id)}><Icon name="close" size={16}/></button>
+                        </div>
+                    ))}
+                </div>
+            )}
+            <div className="comment-controls">
+                <button type="submit" className="action-button" disabled={!text.trim() && stagedAttachments.length === 0}>Save</button>
+                <div className="popover-wrapper">
+                  <button type="button" className="sidebar-btn icon-only" onClick={() => setShowEmojiPicker(p => !p)}><Icon name="mood" /></button>
+                  {showEmojiPicker && (
+                    <Popover onClose={() => setShowEmojiPicker(false)} trigger={null}>
+                      <div className="emoji-picker">
+                        {EMOJIS.map(emoji => <span key={emoji} onClick={() => handleEmojiClick(emoji)}>{emoji}</span>)}
+                      </div>
+                    </Popover>
+                  )}
+                </div>
+                <button type="button" className="sidebar-btn icon-only" onClick={() => fileInputRef.current?.click()} aria-label="Attach file"><Icon name="attachment" /></button>
+                <input type="file" ref={fileInputRef} onChange={handleFileChange} multiple style={{display: 'none'}}/>
+            </div>
+        </form>
+    );
+};
+
+
+/**
+ * CardModal Component
+ */
+const CardModal = ({ card, listTitle, onClose, onUpdateCard, onAddComment, onDeleteCard, availableLabels, availableMembers, currentUser, permissions, customButtons, executeCustomButton, customFieldDefinitions, boardData }) => {
+    const [editText, setEditText] = useState(card.text);
+    const [editDescription, setEditDescription] = useState(card.description);
+    const [isEditingDescription, setIsEditingDescription] = useState(false);
+    const [activePopover, setActivePopover] = useState<string | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const coverFileInputRef = useRef<HTMLInputElement>(null);
+    const [isLinkPopoverOpen, setLinkPopoverOpen] = useState(false);
+    const [linkSearchQuery, setLinkSearchQuery] = useState('');
+    const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+    const [editedCommentText, setEditedCommentText] = useState('');
+
+    const updateCard = (updates: Partial<CardData>) => {
+        onUpdateCard(updates);
+    };
+
+    const handleToggleLabel = (labelId: string) => {
+        const newLabels = card.labels.includes(labelId)
+            ? card.labels.filter(id => id !== labelId)
+            : [...card.labels, labelId];
+        updateCard({ labels: newLabels });
+    };
+
+    const handleToggleMember = (memberId: string) => {
+        const previousMembers = card.members;
+        const newMembers = previousMembers.includes(memberId)
+            ? previousMembers.filter(id => id !== memberId)
+            : [...previousMembers, memberId];
+        updateCard({ members: newMembers });
+    };
+
+    const handleSetDueDate = (dateStr: string) => {
+        const timestamp = dateStr ? new Date(dateStr).getTime() : null;
+        updateCard({ dueDate: { ...card.dueDate, timestamp } });
+    };
+    
+    const handleToggleDueComplete = () => {
+        updateCard({ dueDate: { ...card.dueDate, completed: !card.dueDate.completed } });
+    };
+    
+    const handleSetStartDate = (dateStr: string) => {
+        const timestamp = dateStr ? new Date(dateStr).getTime() : null;
+        updateCard({ startDate: timestamp });
+    };
+
+    const handleSetLocation = (location: string) => {
+        updateCard({ location });
+        setActivePopover(null);
+    };
+    
+    const handleDescriptionSave = () => {
+        if (card.description !== editDescription) {
+            onUpdateCard({ description: editDescription });
+        }
+        setIsEditingDescription(false);
+    }
+
+    const handleAddChecklist = (title: string) => {
+        const newChecklist: ChecklistData = { id: generateId(), title, items: [] };
+        updateCard({ checklists: [...card.checklists, newChecklist] });
+        setActivePopover(null);
+    };
+
+    const handleUpdateChecklist = (checklistIndex: number, updatedChecklist: ChecklistData) => {
+        const newChecklists = [...card.checklists];
+        newChecklists[checklistIndex] = updatedChecklist;
+        updateCard({ checklists: newChecklists });
+    };
+    
+    const handleAddAttachmentLink = (url: string) => {
+        if (url.trim()) {
+            try {
+                const hostname = new URL(url).hostname;
+                const newAttachment: AttachmentData = {
+                    id: generateId(), url, name: `Link: ${hostname}`, timestamp: createTimestamp(), type: 'link'
+                };
+                updateCard({ attachments: [...card.attachments, newAttachment] });
+                setActivePopover(null);
+            } catch (e) { alert("Invalid URL provided."); }
+        }
+    };
+    
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      const newAttachment = await fileToAttachment(file);
+      updateCard({ attachments: [...card.attachments, newAttachment] });
+      setActivePopover(null);
+    };
+
+    const handleSetCover = (cover: CoverData) => {
+        updateCard({ cover });
+    }
+
+    const handleCoverImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const imageUrl = event.target?.result as string;
+            if (imageUrl) {
+                 handleSetCover({ ...card.cover, imageUrl, size: card.cover.size || 'full' });
+            }
+        };
+        reader.readAsDataURL(file);
+    };
+    
+    const handleToggleSubscription = () => {
+      const isSubscribed = card.subscribers.includes(currentUser.id);
+      const newSubscribers = isSubscribed 
+        ? card.subscribers.filter(id => id !== currentUser.id)
+        : [...card.subscribers, currentUser.id];
+      updateCard({ subscribers: newSubscribers });
+    }
+    
+    const isSubscribed = card.subscribers.includes(currentUser.id);
+    
+    const sortedActivity = [
+        ...card.activity.map(a => ({ ...a, type: 'activity' })),
+        ...card.comments.map(c => ({ ...c, type: 'comment' })),
+    ].sort((a, b) => b.timestamp - a.timestamp);
+
+    const handleCustomFieldChange = (fieldId: string, value: any) => {
+        const newCustomFields = {
+            ...card.customFields,
+            [fieldId]: value,
+        };
+        onUpdateCard({ customFields: newCustomFields });
+    };
+
+    const allCards = useMemo(() => boardData.flatMap(list => list.cards), [boardData]);
+    
+    const linkedCardData = useMemo(() => {
+        return card.linkedCards.map(cardId => allCards.find(c => c.id === cardId)).filter(Boolean);
+    }, [card.linkedCards, allCards]);
+
+    const filteredCardsForLinking = useMemo(() => {
+        if (!linkSearchQuery) return [];
+        const query = linkSearchQuery.toLowerCase();
+        return allCards.filter(c =>
+            c.id !== card.id &&
+            !card.linkedCards.includes(c.id) &&
+            (c.text.toLowerCase().includes(query) || String(c.cardShortId).includes(query))
+        );
+    }, [linkSearchQuery, allCards, card.id, card.linkedCards]);
+
+    const handleAddLink = (linkedCardId: string) => {
+        const newLinkedCards = [...card.linkedCards, linkedCardId];
+        onUpdateCard({ linkedCards: newLinkedCards });
+        setLinkPopoverOpen(false);
+        setLinkSearchQuery('');
+    };
+
+    const handleRemoveLink = (linkedCardId: string) => {
+        const newLinkedCards = card.linkedCards.filter(id => id !== linkedCardId);
+        onUpdateCard({ linkedCards: newLinkedCards });
+    };
+    
+    const renderCommentText = (text: string) => {
+      const parts = text.split(/(@\w+)/g);
+      return parts.map((part, index) => {
+          if (part.startsWith('@')) {
+              const memberName = part.substring(1);
+              if (availableMembers.some(m => m.name === memberName)) {
+                  return <strong key={index} className="comment-mention">{part}</strong>;
+              }
+          }
+          return part;
+      });
+    };
+    
+    const AttachmentGroup = ({ attachments }) => (
+      <div className="attachment-list comment-attachments">
+        {(attachments || []).map(att => {
+            if (att.type === 'file' && !att.url) {
+                return (
+                    <div key={att.id} className="attachment-item is-unloaded" title="Local file attachments are not saved between sessions to conserve storage.">
+                        <Icon name="draft" />
+                        <span>{att.name}</span>
+                    </div>
+                );
+            }
+            return (
+                <a key={att.id} href={att.url} target="_blank" rel="noopener noreferrer" className="attachment-item">
+                  {att.previewUrl && <img src={att.previewUrl} className="attachment-preview" alt="Attachment preview"/>}
+                  {!att.previewUrl && <Icon name={att.type === 'link' ? 'link' : 'draft'} />}
+                  <span>{att.name}</span>
+                </a>
+            );
+        })}
+      </div>
+    );
+    
+    const renderCustomFieldInput = (field: CustomFieldDefinition) => {
+        const value = card.customFields[field.id];
+        switch (field.type) {
+            case 'text':
+                return <input type="text" value={value || ''} onChange={e => handleCustomFieldChange(field.id, e.target.value)} disabled={!permissions.canEditCard} />;
+            case 'number':
+                return <input type="number" value={value || ''} onChange={e => handleCustomFieldChange(field.id, e.target.value)} disabled={!permissions.canEditCard} />;
+            case 'date':
+                const dateValue = value ? new Date(value as number).toISOString().split('T')[0] : '';
+                return <input type="date" value={dateValue} onChange={e => handleCustomFieldChange(field.id, new Date(e.target.value).getTime())} disabled={!permissions.canEditCard} />;
+            case 'checkbox':
+                return <input type="checkbox" checked={!!value} onChange={e => handleCustomFieldChange(field.id, e.target.checked)} disabled={!permissions.canEditCard} />;
+            case 'dropdown':
+                return (
+                    <select value={value || ''} onChange={e => handleCustomFieldChange(field.id, e.target.value)} disabled={!permissions.canEditCard}>
+                        <option value="">-- Select --</option>
+                        {field.options?.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                    </select>
+                );
+            default: return null;
+        }
+    };
+
+    const handleUpdateComment = (commentId: string, newText: string) => {
+        if (!permissions.canComment) return;
+        const updatedComments = card.comments.map(comment => {
+            if (comment.id === commentId) {
+                return { ...comment, text: newText };
+            }
+            return comment;
+        });
+        updateCard({ comments: updatedComments });
+        setEditingCommentId(null);
+    };
+
+    const handleStartEditComment = (comment: CommentData) => {
+        setEditingCommentId(comment.id);
+        setEditedCommentText(comment.text);
+    };
+
+    const handleCancelEditComment = () => {
+        setEditingCommentId(null);
+    };
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal" onClick={(e) => e.stopPropagation()} data-component-name="Card Modal" data-component-description="A detailed view for editing a card's properties like description, members, labels, and checklists.">
+                <button className="modal-close-btn" onClick={onClose} aria-label="Close modal"><Icon name="close"/></button>
+                <div className="modal-header">
+                    <input 
+                        className="modal-title" 
+                        value={editText}
+                        onChange={(e) => setEditText(e.target.value)}
+                        onBlur={() => card.text !== editText && onUpdateCard({ text: editText })}
+                        readOnly={!permissions.canEditCard}
+                    />
+                    <p className="modal-subtitle">in list <strong>{listTitle}</strong> <span className="card-short-id">#{card.cardShortId}</span></p>
+                </div>
+                <div className="modal-body">
+                    <div className="modal-main-col">
+                        <div className="modal-details">
+                            {card.members.length > 0 && <div className="modal-detail-item">
+                                <h4>Members</h4>
+                                <div className="member-list">
+                                    {card.members.map(id => availableMembers.find(m => m.id === id)).filter(Boolean).map(m => (
+                                        <img key={m.id} src={m.avatarUrl} alt={m.name} title={m.name} className="member-avatar" />
+                                    ))}
+                                </div>
+                            </div>}
+                            {card.labels.length > 0 && <div className="modal-detail-item">
+                                <h4>Labels</h4>
+                                <div className="label-list">
+                                    {card.labels.map(id => availableLabels.find(l => l.id === id)).filter(Boolean).map(l => (
+                                        <span key={l.id} className="modal-label" style={{ backgroundColor: l.color }}>{l.text}</span>
+                                    ))}
+                                </div>
+                            </div>}
+                             {(card.startDate || card.dueDate.timestamp) && <div className="modal-detail-item">
+                                <h4>Dates</h4>
+                                <div className="date-display">
+                                    {card.startDate && <div><span>Start</span><p>{new Date(card.startDate).toLocaleString()}</p></div>}
+                                    {card.dueDate.timestamp && <div>
+                                        <span>Due</span>
+                                        <p>
+                                            <input type="checkbox" checked={card.dueDate.completed} onChange={handleToggleDueComplete} disabled={!permissions.canEditCard}/>
+                                            {new Date(card.dueDate.timestamp).toLocaleString()}
+                                        </p>
+                                    </div>}
+                                </div>
+                             </div>}
+                             {card.location && <div className="modal-detail-item">
+                                <h4>Location</h4>
+                                <p>{card.location}</p>
+                            </div>}
+                        </div>
+                         {customFieldDefinitions.length > 0 && <div className="modal-section">
+                            <h3>Custom Fields</h3>
+                            <div className="custom-fields-list">
+                                {customFieldDefinitions.map(field => (
+                                    <div key={field.id} className={`custom-field-item type-${field.type}`}>
+                                        <label>{field.name}</label>
+                                        {renderCustomFieldInput(field)}
+                                    </div>
+                                ))}
+                            </div>
+                         </div>}
+                        <div className="modal-section">
+                            <h3>Description</h3>
+                            <textarea
+                                value={editDescription}
+                                onFocus={() => setIsEditingDescription(true)}
+                                onChange={(e) => setEditDescription(e.target.value)}
+                                placeholder={permissions.canEditCard ? "Add a more detailed description..." : "No description."}
+                                readOnly={!permissions.canEditCard}
+                            />
+                            {isEditingDescription && permissions.canEditCard && (
+                                <div className="description-controls">
+                                    <button className="action-button" onClick={handleDescriptionSave}>Save</button>
+                                    <button className="sidebar-btn" onClick={() => fileInputRef.current?.click()}>Attach File</button>
+                                    <input type="file" ref={fileInputRef} onChange={handleFileUpload} style={{display: 'none'}}/>
+                                </div>
+                            )}
+                        </div>
+                        {card.attachments.length > 0 && <div className="modal-section">
+                          <h3>Attachments</h3>
+                          <AttachmentGroup attachments={card.attachments} />
+                        </div>}
+                        {card.linkedCards.length > 0 && <div className="modal-section">
+                            <h3>Linked Cards</h3>
+                            <div className="linked-cards-list">
+                                {linkedCardData.map(linkedCard => (
+                                    <div key={linkedCard.id} className="linked-card-item">
+                                        <span>#{linkedCard.cardShortId} {linkedCard.text}</span>
+                                        {permissions.canEditCard && <button onClick={() => handleRemoveLink(linkedCard.id)}><Icon name="close" size={16} /></button>}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>}
+                        {card.checklists.map((checklist, index) => (
+                           <div key={checklist.id} className="modal-section">
+                             <Checklist checklist={checklist} onUpdate={(updated) => handleUpdateChecklist(index, updated)} canEdit={permissions.canEditCard} />
+                           </div>
+                        ))}
+                         <div className="modal-section">
+                            <h3>Activity</h3>
+                            {permissions.canComment && <CommentForm onSubmit={onAddComment} availableMembers={availableMembers} />}
+                            <div className="activity-list">
+                                {sortedActivity.map(item => {
+                                    if (item.type === 'activity') {
+                                        return (
+                                            <div key={item.id} className="activity-item">
+                                                <p>{item.text}</p>
+                                                <div className="activity-meta">
+                                                    <span>{new Date(item.timestamp).toLocaleString()}</span>
+                                                </div>
+                                            </div>
+                                        );
+                                    }
+                                    
+                                    // It's a comment
+                                    const author = availableMembers.find(m => m.id === item.authorId);
+                                    const isEditingThisComment = editingCommentId === item.id;
+                                    const canEdit = permissions.canComment && item.authorId === currentUser.id;
+
+                                    return (
+                                        <div key={item.id} className="activity-item">
+                                            <strong>{author?.name || 'User'}</strong>
+                                            {isEditingThisComment ? (
+                                                <form className="comment-edit-form" onSubmit={(e) => { e.preventDefault(); handleUpdateComment(item.id, editedCommentText); }}>
+                                                    <textarea
+                                                        value={editedCommentText}
+                                                        onChange={(e) => setEditedCommentText(e.target.value)}
+                                                        autoFocus
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Escape') {
+                                                                e.preventDefault();
+                                                                handleCancelEditComment();
+                                                            }
+                                                        }}
+                                                    />
+                                                    <div className="comment-edit-controls">
+                                                        <button type="submit" className="action-button">Save</button>
+                                                        <button type="button" className="sidebar-btn" style={{margin: 0}} onClick={handleCancelEditComment}>Cancel</button>
+                                                    </div>
+                                                </form>
+                                            ) : (
+                                                <>
+                                                    {item.text && <div className="activity-text">{renderCommentText(item.text)}</div>}
+                                                    {item.attachments && item.attachments.length > 0 && <AttachmentGroup attachments={item.attachments} />}
+                                                </>
+                                            )}
+                                            <div className="activity-meta">
+                                                <span>{new Date(item.timestamp).toLocaleString()}</span>
+                                                {canEdit && !isEditingThisComment && (
+                                                    <>
+                                                        <span>&nbsp;·&nbsp;</span>
+                                                        <button className="link-button" onClick={() => handleStartEditComment(item)}>Edit</button>
+                                                    </>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    </div>
+                    <div className="modal-sidebar">
+                        {permissions.canEditCard && <>
+                          <h3>Add to card</h3>
+                          <div className="popover-wrapper">
+                              <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'members' ? null : 'members')}><Icon name="group" size={20}/><span>Members</span></button>
+                              {activePopover === 'members' && (
+                                  <Popover onClose={() => setActivePopover(null)} trigger={null}>
+                                      <h4>Members</h4>
+                                      {availableMembers.map(member => (
+                                          <div key={member.id} className="popover-item" onClick={() => handleToggleMember(member.id)}>
+                                              <img src={member.avatarUrl} alt={member.name} className="member-avatar" />
+                                              <span>{member.name}</span>
+                                              {card.members.includes(member.id) && <Icon name="check" />}
+                                          </div>
+                                      ))}
+                                  </Popover>
+                              )}
+                          </div>
+                           <div className="popover-wrapper">
+                              <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'labels' ? null : 'labels')}><Icon name="label" size={20}/><span>Labels</span></button>
+                              {activePopover === 'labels' && (
+                                  <Popover onClose={() => setActivePopover(null)} trigger={null}>
+                                      <h4>Labels</h4>
+                                      {availableLabels.map(label => (
+                                          <div key={label.id} className="popover-item label-popover-item" onClick={() => handleToggleLabel(label.id)}>
+                                              <span className="modal-label" style={{ backgroundColor: label.color }}>{label.text}</span>
+                                              {card.labels.includes(label.id) && <Icon name="check" />}
+                                          </div>
+                                      ))}
+                                  </Popover>
+                              )}
+                          </div>
+                          <div className="popover-wrapper">
+                              <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'checklist' ? null : 'checklist')}><Icon name="playlist_add_check" size={20}/><span>Checklist</span></button>
+                              {activePopover === 'checklist' && (
+                                  <Popover onClose={() => setActivePopover(null)} trigger={null}>
+                                      <h4>Add Checklist</h4>
+                                      <AddItemForm placeholder="Checklist title..." buttonText="Add" onSubmit={handleAddChecklist} onCancel={() => setActivePopover(null)} />
+                                  </Popover>
+                              )}
+                          </div>
+                          <div className="popover-wrapper">
+                              <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'dates' ? null : 'dates')}><Icon name="calendar_month" size={20}/><span>Dates</span></button>
+                              {activePopover === 'dates' && (
+                                  <Popover onClose={() => setActivePopover(null)} trigger={null}>
+                                      <h4>Change Dates</h4>
+                                      <label>Start Date</label>
+                                      <input 
+                                          type="date"
+                                          className="popover-input"
+                                          onChange={(e) => handleSetStartDate(e.target.value)}
+                                          value={card.startDate ? new Date(card.startDate).toISOString().split('T')[0] : ''}
+                                      />
+                                      <label>Due Date</label>
+                                      <input 
+                                          type="date"
+                                          className="popover-input"
+                                          onChange={(e) => handleSetDueDate(e.target.value)}
+                                          value={card.dueDate.timestamp ? new Date(card.dueDate.timestamp).toISOString().split('T')[0] : ''}
+                                      />
+                                  </Popover>
+                              )}
+                          </div>
+                          <div className="popover-wrapper">
+                              <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'attachment' ? null : 'attachment')}><Icon name="attachment" size={20}/><span>Attachment</span></button>
+                              {activePopover === 'attachment' && (
+                                  <Popover onClose={() => setActivePopover(null)} trigger={null}>
+                                      <h4>Attach</h4>
+                                      <AddItemForm placeholder="Paste any link here..." buttonText="Attach Link" onSubmit={handleAddAttachmentLink} onCancel={() => setActivePopover(null)} />
+                                      <hr/>
+                                      <button className="action-button full-width" onClick={() => fileInputRef.current?.click()}>Upload a file</button>
+                                      <input type="file" ref={fileInputRef} onChange={handleFileUpload} style={{display: 'none'}}/>
+                                  </Popover>
+                              )}
+                          </div>
+                          <div className="popover-wrapper">
+                              <button className="sidebar-btn" onClick={() => setLinkPopoverOpen(p => !p)}><Icon name="link" size={20}/><span>Link Card</span></button>
+                              {isLinkPopoverOpen && (
+                                  <Popover onClose={() => setLinkPopoverOpen(false)} trigger={null}>
+                                      <h4>Link Card</h4>
+                                      <input
+                                          type="text"
+                                          className="popover-input"
+                                          placeholder="Search cards by title or #ID..."
+                                          value={linkSearchQuery}
+                                          onChange={(e) => setLinkSearchQuery(e.target.value)}
+                                          autoFocus
+                                      />
+                                      <div className="link-search-results">
+                                          {filteredCardsForLinking.map(c => (
+                                              <div key={c.id} className="popover-item" onClick={() => handleAddLink(c.id)}>
+                                                  <span>#{c.cardShortId} - {c.text}</span>
+                                              </div>
+                                          ))}
+                                      </div>
+                                  </Popover>
+                              )}
+                          </div>
+                          <div className="popover-wrapper">
+                              <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'location' ? null : 'location')}><Icon name="location_on" size={20}/><span>Location</span></button>
+                              {activePopover === 'location' && (
+                                  <Popover onClose={() => setActivePopover(null)} trigger={null}>
+                                      <h4>Set Location</h4>
+                                      <AddItemForm placeholder="e.g. 123 Main St" buttonText="Set" onSubmit={handleSetLocation} onCancel={() => setActivePopover(null)} />
+                                  </Popover>
+                              )}
+                          </div>
+                          <div className="popover-wrapper">
+                              <button className="sidebar-btn" onClick={() => setActivePopover(activePopover === 'cover' ? null : 'cover')}><Icon name="image" size={20}/><span>Cover</span></button>
+                              {activePopover === 'cover' && (
+                                  <Popover onClose={() => setActivePopover(null)} trigger={null}>
+                                      <h4>Cover</h4>
+                                       {card.cover.imageUrl && (
+                                          <>
+                                              <p>Size</p>
+                                              <div className="segmented-control cover-size-control">
+                                                  <label>
+                                                      <input type="radio" name="cover-size" checked={!card.cover.size || card.cover.size === 'normal'} onChange={() => updateCard({ cover: { ...card.cover, size: 'normal' }})} />
+                                                      <span>Normal</span>
+                                                  </label>
+                                                  <label>
+                                                      <input type="radio" name="cover-size" checked={card.cover.size === 'full'} onChange={() => updateCard({ cover: { ...card.cover, size: 'full' }})} />
+                                                      <span>Full</span>
+                                                  </label>
+                                              </div>
+                                              <hr/>
+                                          </>
+                                      )}
+                                      <p>Colors</p>
+                                      <div className="color-palette">
+                                        {['#61BD4F', '#F2D600', '#FF9F1A', '#EB5A46', '#0079BF'].map(color => (
+                                          <div key={color} className="color-swatch" style={{backgroundColor: color}} onClick={() => handleSetCover({ ...card.cover, color })} />
+                                        ))}
+                                        <div className="color-swatch" style={{background: 'transparent', border: '1px solid #ccc'}} onClick={() => handleSetCover({ color: undefined, imageUrl: card.cover.imageUrl, size: card.cover.size })} title="Remove color overlay" />
+                                      </div>
+                                      <hr/>
+                                      <button className="action-button full-width" onClick={() => coverFileInputRef.current?.click()}>Upload a cover image</button>
+                                      <input type="file" ref={coverFileInputRef} onChange={handleCoverImageUpload} style={{display: 'none'}} accept="image/*"/>
+                                      <hr/>
+                                      <AddItemForm placeholder="Paste image URL..." buttonText="Set" onSubmit={(url) => handleSetCover({ ...card.cover, imageUrl: url, size: card.cover.size || 'full' })} onCancel={() => {}} />
+                                      <hr/>
+                                      <button className="sidebar-btn delete full-width" onClick={() => handleSetCover({})}>Remove Cover</button>
+                                  </Popover>
+                              )}
+                          </div>
+                        </>}
+                        <h3>Actions</h3>
+                        <button className="sidebar-btn" onClick={handleToggleSubscription}>
+                            <Icon name={isSubscribed ? 'visibility_off' : 'visibility'} size={20} />
+                            <span>{isSubscribed ? 'Unwatch' : 'Watch'}</span>
+                        </button>
+                        {permissions.canEditCard && customButtons.map(button => (
+                            <button key={button.id} className="sidebar-btn automation-btn" onClick={() => executeCustomButton(button, card.id)}>
+                                {button.name}
+                            </button>
+                        ))}
+                        {permissions.canDeleteCard && <button className="sidebar-btn delete" onClick={onDeleteCard}><Icon name="delete" size={20}/><span>Delete Card</span></button>}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+/**
+ * List Component
+ */
+const List = ({ list, listIndex, permissions, visibilityMap, onUpdateListTitle, onDeleteList, onAddCard, onCardClick, moveCard, availableLabels, availableMembers, lastMovedCard }: ListProps & { availableLabels: LabelData[], availableMembers: MemberData[] }) => {
+  const [isAddingCard, setIsAddingCard] = useState(false);
+  const [draggedOver, setDraggedOver] = useState(false);
+  const [isDraggingFromThisList, setIsDraggingFromThisList] = useState(false);
+  
+  const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    onUpdateListTitle(listIndex, e.target.value);
+  };
+  
+  const handleAddCardSubmit = (text: string) => {
+      onAddCard(listIndex, text);
+      setIsAddingCard(false);
+  };
+  
+  const handleDragStart = (e: React.DragEvent, cardIndex: number) => {
+    e.dataTransfer.setData('text/plain', JSON.stringify({ sourceListIndex: listIndex, sourceCardIndex: cardIndex }));
+    e.dataTransfer.effectAllowed = 'move';
+    setIsDraggingFromThisList(true);
+    setTimeout(() => {
+      (e.target as HTMLElement).classList.add('dragging');
+    }, 0);
+  };
+  
+  const handleDragEnd = (e: React.DragEvent) => {
+     (e.target as HTMLElement).classList.remove('dragging');
+     setIsDraggingFromThisList(false);
+  };
+  
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      setDraggedOver(true);
+  };
+  
+  const handleDragLeave = () => {
+      setDraggedOver(false);
+  }
+  
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      setDraggedOver(false);
+      const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+      const { sourceListIndex, sourceCardIndex } = data;
+      
+      const container = e.currentTarget.querySelector('.cards-container');
+      const visibleCardElements = Array.from(container.querySelectorAll('.card:not(.is-hidden):not(.dragging)')) as HTMLElement[];
+      
+      let closestIndexInFiltered = visibleCardElements.length;
+      for (let i = 0; i < visibleCardElements.length; i++) {
+          const child = visibleCardElements[i];
+          const box = child.getBoundingClientRect();
+          if (e.clientY < box.top + box.height / 2) {
+              closestIndexInFiltered = i;
+              break;
+          }
+      }
+
+      let targetCardIndex;
+      if (closestIndexInFiltered === visibleCardElements.length) {
+          targetCardIndex = list.cards.length;
+      } else {
+          const visibleCards = list.cards.filter(c => visibilityMap[c.id]);
+          const actualCard = visibleCards[closestIndexInFiltered];
+          targetCardIndex = list.cards.findIndex(c => c.id === actualCard.id);
+      }
+      
+      if (sourceListIndex === listIndex && sourceCardIndex < targetCardIndex) {
+        targetCardIndex--;
+      }
+      
+      moveCard(sourceListIndex, sourceCardIndex, listIndex, targetCardIndex);
+  };
+
+  return (
+    <div 
+      className={`list-container ${draggedOver ? 'drag-over' : ''} ${isDraggingFromThisList ? 'is-dragging-from' : ''}`}
+      onDragOver={permissions.canEditBoard ? handleDragOver : undefined}
+      onDragLeave={permissions.canEditBoard ? handleDragLeave : undefined}
+      onDrop={permissions.canEditBoard ? handleDrop : undefined}
+      data-component-name="List"
+      data-component-description="A container for a collection of cards, representing a stage in a workflow."
+    >
+      <div className="list-header">
+        <input 
+            className="list-title"
+            value={list.title}
+            onChange={handleTitleChange}
+            aria-label="List title"
+            readOnly={!permissions.canEditBoard}
+        />
+        {permissions.canEditBoard && <button className="delete-list-btn" onClick={() => onDeleteList(listIndex)} aria-label="Delete list">
+          <Icon name="delete" size={18} />
+        </button>}
+      </div>
+      <div className="cards-container">
+        {list.cards.map((card, cardIndex) => {
+          const isAnimating = lastMovedCard && lastMovedCard.id === card.id;
+          const animationClass = isAnimating ? `swipe-in-${lastMovedCard.direction}` : '';
+          return (
+            <Card
+              key={card.id}
+              card={card}
+              isHidden={!visibilityMap[card.id]}
+              canEdit={permissions.canEditBoard}
+              onDragStart={(e) => handleDragStart(e, cardIndex)}
+              onDragEnd={handleDragEnd}
+              onClick={() => onCardClick(listIndex, cardIndex)}
+              availableLabels={availableLabels}
+              availableMembers={availableMembers}
+              animationClass={animationClass}
+            />
+          );
+        })}
+      </div>
+      {permissions.canEditBoard && (
+        isAddingCard ? (
+          <AddItemForm
+            placeholder="Enter a title for this card..."
+            buttonText="Add Card"
+            onSubmit={handleAddCardSubmit}
+            onCancel={() => setIsAddingCard(false)}
+            multiline
+            className="add-card-form"
+          />
+        ) : (
+          <button className="add-card-btn" onClick={() => setIsAddingCard(true)} aria-label="Add a card">
+            <Icon name="add" size={20} />
+            <span>Add a card</span>
+          </button>
+        )
       )}
     </div>
   );
 };
 
-// Initialize the app
+// --- View Components ---
+
+const CalendarView = ({ boardData, onCardClick }) => {
+    const [currentDate, setCurrentDate] = useState(new Date());
+
+    const changeMonth = (offset) => {
+        setCurrentDate(prev => {
+            const newDate = new Date(prev);
+            newDate.setMonth(newDate.getMonth() + offset);
+            return newDate;
+        });
+    };
+
+    const monthStart = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+    const monthEnd = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+    const startDate = new Date(monthStart);
+    startDate.setDate(startDate.getDate() - monthStart.getDay());
+    const endDate = new Date(monthEnd);
+    endDate.setDate(endDate.getDate() + (6 - monthEnd.getDay()));
+
+    const days = [];
+    let day = new Date(startDate);
+    while (day <= endDate) {
+        days.push(new Date(day));
+        day.setDate(day.getDate() + 1);
+    }
+
+    const allCards = boardData.flatMap((list, listIndex) => list.cards.map((card, cardIndex) => ({ ...card, listIndex, cardIndex })));
+    
+    return (
+        <div className="calendar-view" data-component-name="Calendar View" data-component-description="Displays cards with due dates on a monthly calendar.">
+            <div className="calendar-header">
+                <button onClick={() => changeMonth(-1)} aria-label="Previous month"><Icon name="arrow_back_ios" /></button>
+                <h2>{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</h2>
+                <button onClick={() => changeMonth(1)} aria-label="Next month"><Icon name="arrow_forward_ios" /></button>
+            </div>
+            <div className="calendar-grid">
+                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => <div key={d} className="calendar-weekday">{d}</div>)}
+                {days.map(d => {
+                    const cardsForDay = allCards.filter(c => c.dueDate.timestamp && new Date(c.dueDate.timestamp).toDateString() === d.toDateString());
+                    return (
+                        <div key={d.toString()} className={`calendar-day ${d.getMonth() !== currentDate.getMonth() ? 'other-month' : ''}`}>
+                            <span>{d.getDate()}</span>
+                            <div className="calendar-events">
+                                {cardsForDay.map(card => (
+                                    <div key={card.id} className="calendar-event" onClick={() => onCardClick(card.listIndex, card.cardIndex)}>
+                                        {card.text}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+};
+
+const TimelineView = ({ boardData, onCardClick }) => {
+    // This is a simplified timeline. A full implementation would be more complex.
+    const allCards = boardData.flatMap(list => list.cards.filter(c => c.startDate && c.dueDate.timestamp));
+    if (allCards.length === 0) return <div className="view-container">No cards with start and end dates to display.</div>;
+
+    const minDate = new Date(Math.min(...allCards.map(c => c.startDate)));
+    const maxDate = new Date(Math.max(...allCards.map(c => c.dueDate.timestamp)));
+    minDate.setDate(minDate.getDate() - 2);
+    maxDate.setDate(maxDate.getDate() + 2);
+    
+    const totalDays = (maxDate.getTime() - minDate.getTime()) / (1000 * 3600 * 24);
+
+    const dateMarkers = [];
+    for (let d = new Date(minDate); d <= maxDate; d.setDate(d.getDate() + 1)) {
+        dateMarkers.push(new Date(d));
+    }
+
+    return (
+        <div className="timeline-view" data-component-name="Timeline View" data-component-description="A Gantt-like view for visualizing cards with start and end dates over time.">
+            <div className="timeline-header">
+                {dateMarkers.map(d => (
+                    <div key={d.toString()} className="timeline-date-marker">
+                        {d.getDate()}<br/>
+                        {d.toLocaleString('default', { weekday: 'short' }).charAt(0)}
+                    </div>
+                ))}
+            </div>
+            <div className="timeline-body">
+                {boardData.map((list, listIndex) => (
+                    <div key={list.id} className="timeline-row">
+                        <div className="timeline-list-title">{list.title}</div>
+                        <div className="timeline-cards">
+                            {list.cards.filter(c => c.startDate && c.dueDate.timestamp).map((card, cardIndex) => {
+                                const start = new Date(card.startDate);
+                                const end = new Date(card.dueDate.timestamp);
+                                const left = ((start.getTime() - minDate.getTime()) / (1000 * 3600 * 24) / totalDays) * 100;
+                                const width = ((end.getTime() - start.getTime()) / (1000 * 3600 * 24) / totalDays) * 100;
+                                return (
+                                    <div 
+                                        key={card.id} 
+                                        className="timeline-card-bar" 
+                                        style={{ left: `${left}%`, width: `${width}%` }}
+                                        onClick={() => onCardClick(listIndex, list.cards.findIndex(c=>c.id === card.id))}
+                                    >
+                                        {card.text}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
+const TableView = ({ boardData, onCardClick, availableLabels, availableMembers }) => {
+    const allCards = boardData.flatMap((list, listIndex) => list.cards.map((card, cardIndex) => ({ ...card, listTitle: list.title, listIndex, cardIndex })));
+    const [sortConfig, setSortConfig] = useState<{key: string, direction: 'asc' | 'desc'}>({key: 'text', direction: 'asc'});
+
+    const sortedCards = React.useMemo(() => {
+        let sortableCards = [...allCards];
+        if (sortConfig.key) {
+            sortableCards.sort((a, b) => {
+                if (a[sortConfig.key] < b[sortConfig.key]) return sortConfig.direction === 'asc' ? -1 : 1;
+                if (a[sortConfig.key] > b[sortConfig.key]) return sortConfig.direction === 'asc' ? 1 : -1;
+                return 0;
+            });
+        }
+        return sortableCards;
+    }, [allCards, sortConfig]);
+    
+    const requestSort = (key: string) => {
+        let direction: 'asc' | 'desc' = 'asc';
+        if (sortConfig.key === key && sortConfig.direction === 'asc') {
+            direction = 'desc';
+        }
+        setSortConfig({ key, direction });
+    }
+
+    const getSortIndicator = (key: string) => {
+        if (sortConfig.key !== key) return null;
+        return sortConfig.direction === 'asc' ? ' ▲' : ' ▼';
+    };
+
+    return (
+        <div className="table-view" data-component-name="Table View" data-component-description="A spreadsheet-style view of all cards, allowing for sorting and quick scanning.">
+            <table>
+                <thead>
+                    <tr>
+                        <th onClick={() => requestSort('text')}>Card Title{getSortIndicator('text')}</th>
+                        <th onClick={() => requestSort('listTitle')}>List{getSortIndicator('listTitle')}</th>
+                        <th onClick={() => requestSort('dueDate')}>Due Date{getSortIndicator('dueDate')}</th>
+                        <th>Members</th>
+                        <th>Labels</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {sortedCards.map(card => (
+                        <tr key={card.id} onClick={() => onCardClick(card.listIndex, card.cardIndex)}>
+                            <td>{card.text}</td>
+                            <td>{card.listTitle}</td>
+                            <td>{card.dueDate.timestamp ? new Date(card.dueDate.timestamp).toLocaleDateString() : 'N/A'}</td>
+                            <td>{card.members.map(id => availableMembers.find(m => m.id === id)?.name).join(', ')}</td>
+                            <td>
+                                <div className="label-list">
+                                    {card.labels.map(id => availableLabels.find(l => l.id === id)).map(l => l && <span key={l.id} className="modal-label" style={{backgroundColor: l.color}}>{l.text}</span>)}
+                                </div>
+                            </td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+};
+
+const DashboardView = ({ boardData, availableLabels, availableMembers }) => {
+    const allCards = boardData.flatMap(l => l.cards);
+
+    const cardsByList = boardData.map(l => ({ name: l.title, count: l.cards.length }));
+
+    const cardsByMember = availableMembers.map(member => ({
+        name: member.name,
+        count: allCards.filter(c => c.members.includes(member.id)).length
+    })).filter(m => m.count > 0);
+    
+    const cardsByLabel = availableLabels.map(label => ({
+        ...label,
+        count: allCards.filter(c => c.labels.includes(label.id)).length
+    })).filter(l => l.count > 0);
+
+    const Chart = ({title, data, colorProp = null}) => {
+        const maxCount = Math.max(...data.map(d => d.count), 0);
+        return (
+            <div className="chart-container">
+                <h3>{title}</h3>
+                {data.map(item => (
+                    <div key={item.id || item.name} className="chart-item">
+                        <div className="chart-label">{item.text || item.name}</div>
+                        <div className="chart-bar-wrapper">
+                            <div 
+                                className="chart-bar" 
+                                style={{
+                                    width: `${maxCount > 0 ? (item.count / maxCount) * 100 : 0}%`,
+                                    backgroundColor: item[colorProp] || 'var(--color-primary)'
+                                }}
+                            />
+                        </div>
+                        <div className="chart-value">{item.count}</div>
+                    </div>
+                ))}
+            </div>
+        );
+    }
+    
+    return (
+        <div className="dashboard-view" data-component-name="Dashboard View" data-component-description="Provides an overview of board statistics with charts for cards per list, member, and label.">
+            <Chart title="Cards per List" data={cardsByList} />
+            <Chart title="Cards per Member" data={cardsByMember} />
+            <Chart title="Cards per Label" data={cardsByLabel} colorProp="color" />
+        </div>
+    );
+};
+
+const MapView = ({ boardData, onCardClick }) => {
+    const cardsWithLocation = boardData.flatMap((list, listIndex) => 
+        list.cards.map((card, cardIndex) => ({ ...card, listTitle: list.title, listIndex, cardIndex }))
+    ).filter(c => c.location);
+
+    if (cardsWithLocation.length === 0) {
+        return <div className="view-container">No cards with a location assigned.</div>;
+    }
+
+    return (
+        <div className="map-view" data-component-name="Map View" data-component-description="Shows cards that have a physical location assigned.">
+            <h3>Cards with Locations</h3>
+            <ul>
+                {cardsWithLocation.map(card => (
+                    <li key={card.id} onClick={() => onCardClick(card.listIndex, card.cardIndex)}>
+                        <strong>{card.text}</strong> ({card.listTitle})
+                        <p>{card.location}</p>
+                    </li>
+                ))}
+            </ul>
+        </div>
+    );
+};
+
+const NotificationsPopover = ({ notifications, onNotificationClick, onMarkAllRead, onClose }) => {
+    return (
+        <Popover onClose={onClose} trigger={null}>
+            <div className="notifications-popover">
+                <div className="notifications-header">
+                    <h4>Notifications</h4>
+                    <button onClick={onMarkAllRead}>Mark all as read</button>
+                </div>
+                <div className="notifications-list">
+                    {notifications.length === 0 ? (
+                        <p className="no-notifications">No new notifications</p>
+                    ) : (
+                        notifications.map(n => (
+                            <div key={n.id} className={`notification-item ${!n.read ? 'unread' : ''}`} onClick={() => onNotificationClick(n)}>
+                                <p>{n.text}</p>
+                                <span className="notification-time">{new Date(n.timestamp).toLocaleTimeString()}</span>
+                            </div>
+                        ))
+                    )}
+                </div>
+            </div>
+        </Popover>
+    );
+};
+
+const AutomationModal = ({ isOpen, onClose, automations, onUpdate, boardData, availableLabels, availableMembers }) => {
+    if (!isOpen) return null;
+    const [activeTab, setActiveTab] = useState('rules');
+
+    // Simplified UI for brevity. A full implementation would have forms for creating/editing.
+    const getActionDescription = (action: AutomationAction) => {
+        switch (action.type) {
+            case 'move-to-list': return `move card to list "${boardData.find(l => l.id === action.listId)?.title}"`;
+            case 'set-due-date-complete': return `mark due date as ${action.completed ? 'complete' : 'incomplete'}`;
+            case 'add-checklist': return `add checklist titled "${action.title}"`;
+            case 'post-comment': return `post comment "${action.text}"`;
+            case 'add-member': return `add member "${availableMembers.find(m => m.id === action.memberId)?.name}"`;
+            case 'add-label': return `add label "${availableLabels.find(l => l.id === action.labelId)?.text}"`;
+            default: return 'unknown action';
+        }
+    };
+    
+    const getTriggerDescription = (trigger: AutomationTrigger) => {
+         switch (trigger.type) {
+            case 'card-move': return `When a card is moved to "${boardData.find(l => l.id === trigger.toListId)?.title}"`;
+            case 'label-add': return `When label "${availableLabels.find(l => l.id === trigger.labelId)?.text}" is added`;
+            default: return 'unknown trigger';
+        }
+    };
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal automation-modal" onClick={(e) => e.stopPropagation()} data-component-name="Automation Modal" data-component-description="Configure automation rules, scheduled commands, and custom buttons for the board.">
+                <button className="modal-close-btn" onClick={onClose} aria-label="Close modal"><Icon name="close"/></button>
+                <div className="modal-header">
+                    <h3 className="modal-title no-edit">Automation</h3>
+                </div>
+                <div className="automation-tabs">
+                    <button onClick={() => setActiveTab('rules')} className={activeTab === 'rules' ? 'active' : ''}>Rules</button>
+                    <button onClick={() => setActiveTab('scheduled')} className={activeTab === 'scheduled' ? 'active' : ''}>Scheduled</button>
+                    <button onClick={() => setActiveTab('card-buttons')} className={activeTab === 'card-buttons' ? 'active' : ''}>Card Buttons</button>
+                    <button onClick={() => setActiveTab('board-buttons')} className={activeTab === 'board-buttons' ? 'active' : ''}>Board Buttons</button>
+                </div>
+                <div className="automation-content">
+                    {activeTab === 'rules' && (
+                        <div>
+                            <h4>Enabled Rules</h4>
+                            <ul className="automation-list">
+                                {automations.rules.map(rule => (
+                                    <li key={rule.id}>
+                                        <strong>{rule.name}:</strong> {getTriggerDescription(rule.trigger)}, then {getActionDescription(rule.action)}.
+                                    </li>
+                                ))}
+                            </ul>
+                            <button className="action-button">Add Rule</button>
+                        </div>
+                    )}
+                    {activeTab === 'scheduled' && (
+                        <div>
+                            <h4>Scheduled Commands</h4>
+                             <ul className="automation-list">
+                                {automations.scheduled.map(cmd => (
+                                    <li key={cmd.id}>
+                                        <strong>{cmd.name}:</strong> Every {cmd.schedule}, on all cards in "{boardData.find(l=>l.id===cmd.targetListId)?.title}", {getActionDescription(cmd.action)}.
+                                    </li>
+                                ))}
+                            </ul>
+                            <button className="action-button">Add Scheduled Command</button>
+                        </div>
+                    )}
+                     {activeTab === 'card-buttons' && (
+                        <div>
+                            <h4>Card Buttons</h4>
+                             <ul className="automation-list">
+                                {automations.cardButtons.map(btn => (
+                                    <li key={btn.id}>
+                                        Button "{btn.name}" will {getActionDescription(btn.action)}.
+                                    </li>
+                                ))}
+                            </ul>
+                            <button className="action-button">Add Card Button</button>
+                        </div>
+                    )}
+                    {activeTab === 'board-buttons' && (
+                        <div>
+                            <h4>Board Buttons</h4>
+                            <ul className="automation-list">
+                                {automations.boardButtons.map(btn => (
+                                    <li key={btn.id}>
+                                        Button "{btn.name}" will perform its action.
+                                    </li>
+                                ))}
+                            </ul>
+                            <button className="action-button">Add Board Button</button>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const PalettePreview = ({ sourceColor }: { sourceColor: string }) => {
+    const colors = useMemo(() => {
+        if (!sourceColor || !/^#([0-9A-F]{3}){1,2}$/i.test(sourceColor)) {
+            // Return a default/fallback palette for invalid color strings
+            return ['#cccccc', '#bbbbbb', '#aaaaaa', '#999999'];
+        }
+        return [
+            sourceColor,
+            '#42474E', // Represents a dark surface variant
+            '#DEE3EA', // Represents a light surface variant
+            '#F0F4F9', // Represents a light surface container
+        ];
+    }, [sourceColor]);
+
+    return (
+        <div className="palette-preview">
+            {colors.map((color, index) => (
+                <div key={`${color}-${index}`} className="palette-preview-swatch" style={{ backgroundColor: color }} />
+            ))}
+        </div>
+    );
+};
+
+const AppearanceSettings = ({ theme, updateTheme, resetTheme, exportTheme, importTheme, onOpenElementCustomizer }) => {
+    const importInputRef = useRef<HTMLInputElement>(null);
+    const BOARD_BACKGROUNDS: Theme['boardBackground'][] = ['none', 'dots', 'grid', 'noise', 'nebula'];
+    const PRESET_THEMES = [
+        { name: 'Default', sourceColor: '#6750A4' }, // M3 Default
+        { name: 'Calm Blue', sourceColor: '#0079BF' },
+        { name: 'Forest', sourceColor: '#4CAF50' },
+        { name: 'Sunrise', sourceColor: '#FF9800' },
+        { name: 'Ruby', sourceColor: '#E91E63' },
+        { name: 'Orchid', sourceColor: '#9d55c7' },
+    ];
+    
+    const handleImportClick = () => {
+        importInputRef.current?.click();
+    };
+
+    const handleFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            importTheme(file);
+        }
+    };
+    
+    return (
+        <div className="appearance-settings">
+            <div className="appearance-controls">
+                <div className="setting-item">
+                    <h5>Mode</h5>
+                    <div className="segmented-control">
+                        {(['light', 'dark', 'system'] as const).map(mode => (
+                            <label key={mode}>
+                                <input type="radio" name="theme-mode" value={mode} checked={theme.mode === mode} onChange={() => updateTheme({ mode })} />
+                                <span>{mode.charAt(0).toUpperCase() + mode.slice(1)}</span>
+                            </label>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="setting-item">
+                    <h5>Color Palette</h5>
+                    <div className="preset-palettes">
+                        {PRESET_THEMES.map(preset => (
+                            <button
+                                key={preset.name}
+                                className={`preset-palette-btn ${theme.sourceColor.toLowerCase() === preset.sourceColor.toLowerCase() ? 'active' : ''}`}
+                                onClick={() => updateTheme({ sourceColor: preset.sourceColor })}
+                                aria-label={`Set palette to ${preset.name}`}
+                            >
+                                <PalettePreview sourceColor={preset.sourceColor} />
+                                <span>{preset.name}</span>
+                            </button>
+                        ))}
+                    </div>
+                    <div className="accent-picker">
+                        <input
+                            type="color"
+                            value={theme.sourceColor}
+                            onChange={e => updateTheme({ sourceColor: e.target.value })}
+                            className="accent-swatch custom"
+                            aria-label="Custom source color"
+                        />
+                        <div className="custom-color-details">
+                            <span>Custom Source</span>
+                            <PalettePreview sourceColor={theme.sourceColor} />
+                        </div>
+                    </div>
+                </div>
+                
+                <div className="setting-item">
+                    <h5>Corner Radius</h5>
+                    <div className="slider-control">
+                        <input type="range" min="0" max="16" value={theme.radius} onChange={e => updateTheme({ radius: parseInt(e.target.value, 10) })} />
+                        <span>{theme.radius}px</span>
+                    </div>
+                </div>
+                
+                <div className="setting-item">
+                    <h5>Font Size</h5>
+                    <div className="slider-control">
+                        <input type="range" min="0.9" max="1.1" step="0.01" value={theme.fontScale} onChange={e => updateTheme({ fontScale: parseFloat(e.target.value) })} />
+                        <span>{Math.round(theme.fontScale * 100)}%</span>
+                    </div>
+                </div>
+                
+                <div className="setting-item">
+                    <h5>Density</h5>
+                    <div className="segmented-control">
+                        {(['compact', 'comfortable', 'cozy'] as const).map(density => (
+                            <label key={density}>
+                                <input type="radio" name="theme-density" value={density} checked={theme.density === density} onChange={() => updateTheme({ density })} />
+                                <span>{density.charAt(0).toUpperCase() + density.slice(1)}</span>
+                            </label>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="setting-item">
+                    <h5>Board Width</h5>
+                    <div className="segmented-control">
+                        {(['normal', 'wide'] as const).map(width => (
+                            <label key={width}>
+                                <input type="radio" name="theme-width" value={width} checked={theme.boardWidth === width} onChange={() => updateTheme({ boardWidth: width })} />
+                                <span>{width.charAt(0).toUpperCase() + width.slice(1)}</span>
+                            </label>
+                        ))}
+                    </div>
+                </div>
+                
+                <div className="setting-item">
+                    <h5>Board Background</h5>
+                    <div className="background-picker">
+                        {BOARD_BACKGROUNDS.map(bg => (
+                            <button
+                                key={bg}
+                                className={`background-tile bg-tile-${bg} ${theme.boardBackground === bg ? 'active' : ''}`}
+                                onClick={() => updateTheme({ boardBackground: bg })}
+                                aria-label={`Set board background to ${bg}`}
+                            >
+                                <span>{bg.charAt(0).toUpperCase() + bg.slice(1)}</span>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="setting-item">
+                     <label className="toggle-control">
+                        <input type="checkbox" checked={theme.reducedMotion} onChange={e => updateTheme({ reducedMotion: e.target.checked })} />
+                        <span>Reduce Motion</span>
+                    </label>
+                </div>
+                
+                <div className="setting-item">
+                    <h5>Theme Actions</h5>
+                    <div className="theme-actions">
+                        <button className="sidebar-btn full-width" onClick={onOpenElementCustomizer}><Icon name="code" size={20}/> Customize Elements</button>
+                        <button className="sidebar-btn" onClick={exportTheme}>Export</button>
+                        <button className="sidebar-btn" onClick={handleImportClick}>Import</button>
+                        <input type="file" ref={importInputRef} onChange={handleFileImport} accept=".mbtheme" style={{ display: 'none' }} />
+                        <button className="sidebar-btn delete full-width" onClick={resetTheme}>Reset to Defaults</button>
+                    </div>
+                </div>
+                
+            </div>
+            <div className="appearance-preview">
+                <h5>Live Preview</h5>
+                <div className="theme-preview-board">
+                    <div className="theme-preview-list">
+                        <div className="theme-preview-list-title">In Progress</div>
+                        <div className="theme-preview-card">
+                            <div className="theme-preview-card-labels">
+                                <span style={{backgroundColor: '#61BD4F'}}></span>
+                                <span style={{backgroundColor: '#F2D600'}}></span>
+                            </div>
+                            <p>Design the new settings modal</p>
+                        </div>
+                        <div className="theme-preview-card">
+                            <p>Implement theme persistence</p>
+                        </div>
+                        <button className="theme-preview-button"><Icon name="add" size={20}/> Add a card</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const SettingsModal = ({ isOpen, onClose, onClearData, theme, updateTheme, resetTheme, exportTheme, importTheme, onOpenElementCustomizer, onExportJson, onExportCsv, onImportJson, isDevMode, onToggleDevMode, members, allUsers, boardMembers, onInvite, onUpdateRole, onRemoveMember, permissions, definitions, onUpdateDefinitions }) => {
+    if (!isOpen) return null;
+    const [activeTab, setActiveTab] = useState('appearance');
+    const boardImportInputRef = useRef<HTMLInputElement>(null);
+
+    const licenses = [
+        { name: 'React & React DOM', license: 'MIT License', url: 'https://github.com/facebook/react/blob/main/LICENSE' },
+        { name: 'Geist Sans & Mono Fonts', license: 'SIL Open Font License 1.1', url: 'https://github.com/vercel/geist-font/blob/main/LICENSE' },
+    ];
+
+    const handleClearData = () => {
+        if (window.confirm('Are you sure you want to delete all board data? This action cannot be undone.')) {
+            onClearData();
+        }
+    };
+    
+    const handleImportClick = () => {
+        boardImportInputRef.current?.click();
+    };
+
+    const handleFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            onImportJson(file);
+        }
+        if (e.target) e.target.value = ''; // Allow re-uploading same file
+    };
+
+    // --- Members/Share Logic ---
+    const [searchQuery, setSearchQuery] = useState('');
+    const filteredUsers = useMemo(() => {
+        if (!searchQuery) return [];
+        const query = searchQuery.toLowerCase();
+        const boardMemberIds = boardMembers.map(bm => bm.userId);
+        return allUsers.filter(u => 
+            !boardMemberIds.includes(u.id) && 
+            (u.name.toLowerCase().includes(query) || u.email.toLowerCase().includes(query))
+        );
+    }, [searchQuery, allUsers, boardMembers]);
+
+    // --- Custom Fields Logic ---
+    const [newFieldName, setNewFieldName] = useState('');
+    const [newFieldType, setNewFieldType] = useState<CustomFieldDefinition['type']>('text');
+
+    const handleAddField = (e) => {
+        e.preventDefault();
+        if (newFieldName.trim()) {
+            const newField: CustomFieldDefinition = {
+                id: generateId(),
+                name: newFieldName.trim(),
+                type: newFieldType,
+                ...(newFieldType === 'dropdown' && { options: ['Option 1', 'Option 2'] })
+            };
+            onUpdateDefinitions([...definitions, newField]);
+            setNewFieldName('');
+        }
+    };
+    
+    const handleDeleteField = (id: string) => {
+        onUpdateDefinitions(definitions.filter(d => d.id !== id));
+    };
+
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal settings-modal" onClick={(e) => e.stopPropagation()} data-component-name="Settings Modal" data-component-description="Main settings panel for appearance, data management (import/export), and other application settings.">
+                <button className="modal-close-btn" onClick={onClose} aria-label="Close modal"><Icon name="close"/></button>
+                <div className="modal-header">
+                    <h3 className="modal-title no-edit">Settings</h3>
+                    <p className="modal-subtitle">This app is in active development. Some features may be incomplete or change.</p>
+                </div>
+                <div className="settings-body">
+                    <div className="settings-sidebar">
+                        <div>
+                             <button onClick={() => setActiveTab('appearance')} className={activeTab === 'appearance' ? 'active' : ''}><Icon name="palette" size={20} /> Appearance</button>
+                             <button onClick={() => setActiveTab('members')} className={activeTab === 'members' ? 'active' : ''}><Icon name="group" size={20} /> Members</button>
+                             <button onClick={() => setActiveTab('fields')} className={activeTab === 'fields' ? 'active' : ''}><Icon name="data_object" size={20} /> Fields</button>
+                             <button onClick={() => setActiveTab('general')} className={activeTab === 'general' ? 'active' : ''}><Icon name="tune" size={20} /> General</button>
+                             <button onClick={() => setActiveTab('api')} className={activeTab === 'api' ? 'active' : ''}><Icon name="api" size={20} /> API</button>
+                             <button onClick={() => setActiveTab('licenses')} className={activeTab === 'licenses' ? 'active' : ''}><Icon name="description" size={20} /> Licenses</button>
+                             <button onClick={() => setActiveTab('dev')} className={activeTab === 'dev' ? 'active' : ''}><Icon name="code" size={20} /> Dev</button>
+                        </div>
+                        <div className="developer-credit">Developed by Alan Warrick</div>
+                    </div>
+                    <div className="settings-content">
+                        {activeTab === 'appearance' && (
+                            <AppearanceSettings 
+                                theme={theme}
+                                updateTheme={updateTheme}
+                                resetTheme={resetTheme}
+                                exportTheme={exportTheme}
+                                importTheme={importTheme}
+                                onOpenElementCustomizer={onOpenElementCustomizer}
+                            />
+                        )}
+                        {activeTab === 'members' && (
+                            <div>
+                                <h4>Share & Members</h4>
+                                <div className="share-invite-section">
+                                    <p>Invite new users to collaborate on this board.</p>
+                                    {permissions.canManageMembers ? (
+                                        <>
+                                            <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search users by name or email..." />
+                                            {filteredUsers.length > 0 && (
+                                                <div className="invite-search-results">
+                                                    {filteredUsers.map(user => (
+                                                        <div key={user.id} className="invite-user-item">
+                                                            <div className="user-info">
+                                                                <img src={user.avatarUrl} alt={user.name} className="member-avatar" />
+                                                                <span>{user.name} ({user.email})</span>
+                                                            </div>
+                                                            <button onClick={() => { onInvite(user.id); setSearchQuery(''); }}>Invite</button>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </>
+                                    ) : (
+                                      <p>You don't have permission to invite new members.</p>
+                                    )}
+                                </div>
+                                <div className="share-members-list">
+                                    <h4>Board Members</h4>
+                                    {members.map(member => {
+                                        const boardMember = boardMembers.find(bm => bm.userId === member.id);
+                                        if (!boardMember) return null;
+                                        const canChangeRole = permissions.canManageMembers && (permissions.isOwner || (boardMember.role !== 'owner' && boardMember.role !== 'admin'));
+                                        const canRemove = permissions.canManageMembers && boardMember.role !== 'owner';
+
+                                        return (
+                                            <div key={member.id} className="share-member-item">
+                                                <img src={member.avatarUrl} alt={member.name} className="member-avatar" />
+                                                <span className="member-name">{member.name}</span>
+                                                <select 
+                                                    value={boardMember.role}
+                                                    onChange={(e) => onUpdateRole(member.id, e.target.value as Role)}
+                                                    disabled={!canChangeRole}
+                                                >
+                                                    {permissions.isOwner && <option value="owner">Owner</option>}
+                                                    {(permissions.isOwner || (boardMember.role !== 'owner')) && <option value="admin">Admin</option>}
+                                                    <option value="member">Member</option>
+                                                    <option value="viewer">Viewer</option>
+                                                </select>
+                                                {canRemove && <button className="remove-member-btn" onClick={() => onRemoveMember(member.id)} aria-label="Remove member"><Icon name="close" size={18}/></button>}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+                        {activeTab === 'fields' && (
+                           <div>
+                                <h4>Custom Fields</h4>
+                                <p>Manage custom field definitions that can be applied to all cards on the board.</p>
+                                <ul className="automation-list">
+                                    {definitions.map(def => (
+                                        <li key={def.id} className="custom-field-def-item">
+                                            <span><strong>{def.name}</strong> ({def.type})</span>
+                                            <button onClick={() => handleDeleteField(def.id)}>Delete</button>
+                                        </li>
+                                    ))}
+                                </ul>
+                                <form onSubmit={handleAddField} className="custom-field-form">
+                                    <h4>Add New Field</h4>
+                                    <input
+                                        type="text"
+                                        value={newFieldName}
+                                        onChange={(e) => setNewFieldName(e.target.value)}
+                                        placeholder="Field Name (e.g., Story Points)"
+                                    />
+                                    <select value={newFieldType} onChange={(e) => setNewFieldType(e.target.value as any)}>
+                                        <option value="text">Text</option>
+                                        <option value="number">Number</option>
+                                        <option value="date">Date</option>
+                                        <option value="checkbox">Checkbox</option>
+                                        <option value="dropdown">Dropdown</option>
+                                    </select>
+                                    <button type="submit" className="action-button">Add Field</button>
+                                </form>
+                            </div>
+                        )}
+                        {activeTab === 'general' && (
+                             <div>
+                                <h4>General Settings</h4>
+                                <div className="setting-item">
+                                    <h5>Export / Import Board</h5>
+                                    <p>Export your board to a JSON file for backup, or to a CSV file for use in other applications.</p>
+                                    <div className="theme-actions">
+                                        <button className="sidebar-btn" onClick={onExportJson}><Icon name="file_download" size={20}/>Export as JSON</button>
+                                        <button className="sidebar-btn" onClick={onExportCsv}><Icon name="grid_on" size={20}/>Export as CSV</button>
+                                    </div>
+                                    <hr style={{margin: '16px 0'}} />
+                                    <p>Restore a board from a JSON backup file. This will overwrite all current board data.</p>
+                                    <div className="theme-actions">
+                                        <button className="sidebar-btn" onClick={handleImportClick}><Icon name="file_upload" size={20}/>Import from JSON</button>
+                                        <input type="file" ref={boardImportInputRef} onChange={handleFileImport} accept=".json" style={{ display: 'none' }} />
+                                    </div>
+                                </div>
+
+                                <div className="setting-item" style={{marginTop: '16px'}}>
+                                    <h5>Danger Zone</h5>
+                                    <p>This will permanently delete all lists, cards, and settings from your browser's local storage.</p>
+                                    <button className="sidebar-btn delete" onClick={handleClearData}>Clear All Board Data</button>
+                                </div>
+                            </div>
+                        )}
+                         {activeTab === 'api' && (
+                            <div>
+                                <h4>API Integrations</h4>
+                                <div className="setting-item">
+                                    <h5>Google Drive</h5>
+                                    <p>Connect your Google Drive account to sync board attachments and backups automatically.</p>
+                                    <div className="api-integration-status">
+                                        <span>Status: <span className="status-disconnected">Not Connected</span></span>
+                                        <button 
+                                            className="sidebar-btn" 
+                                            onClick={() => alert('Google Drive API integration coming soon!')}
+                                        >
+                                            <Icon name="link" size={20} />
+                                            Connect to Google Drive
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                        {activeTab === 'dev' && (
+                            <div>
+                                <h4>Developer Tools</h4>
+                                <div className="setting-item">
+                                    <h5>Component Inspector</h5>
+                                    <p>Enable to see component names and descriptions when you hover over them.</p>
+                                    <label className="toggle-control">
+                                        <input type="checkbox" checked={isDevMode} onChange={onToggleDevMode} />
+                                        <span>Enable Inspector</span>
+                                    </label>
+                                </div>
+                                <div className="setting-item" style={{marginTop: '16px'}}>
+                                    <h5>Feedback & Contributions</h5>
+                                    <p>This app is in development and is not feature complete. Found a bug or have an idea for a new feature? Let us know on GitHub!</p>
+                                    <div className="theme-actions">
+                                        <a href="https://github.com/alanwarrick/mosaic-board/issues/new?template=bug_report.md" target="_blank" rel="noopener noreferrer" className="sidebar-btn">
+                                            <Icon name="bug_report" size={20}/> Report a Bug
+                                        </a>
+                                        <a href="https://github.com/alanwarrick/mosaic-board/issues/new?template=feature_request.md" target="_blank" rel="noopener noreferrer" className="sidebar-btn">
+                                            <Icon name="lightbulb" size={20}/> Request a Feature
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                        {activeTab === 'licenses' && (
+                            <div>
+                                <h4>Third-Party Licenses</h4>
+                                <p>MosaicBoard is built using fantastic open-source software. We are grateful to the developers of these projects.</p>
+                                <ul className="license-list">
+                                    {licenses.map(lib => (
+                                        <li key={lib.name} className="license-item">
+                                            <strong>{lib.name}</strong>
+                                            <span> - </span>
+                                            <a href={lib.url} target="_blank" rel="noopener noreferrer">{lib.license}</a>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const CUSTOMIZABLE_ELEMENTS = [
+    { name: 'Main Header', selector: 'header' },
+    { name: 'Board', selector: '.board' },
+    { name: 'List', selector: '.list-container' },
+    { name: 'List Header', selector: '.list-header .list-title' },
+    { name: 'Card', selector: '.card' },
+    { name: 'Primary Button', selector: '.action-button' },
+    { name: 'Secondary Button', selector: '.sidebar-btn' },
+    { name: 'Modal Window', selector: '.modal' },
+    { name: 'Modal Title', selector: '.modal-title' },
+];
+
+const ElementCustomizerModal = ({ isOpen, onClose, originalCss, onSave }) => {
+    if (!isOpen) return null;
+
+    const [activeSelector, setActiveSelector] = useState(CUSTOMIZABLE_ELEMENTS[0].selector);
+    const [localCss, setLocalCss] = useState(originalCss);
+
+    useEffect(() => {
+        if (isOpen) {
+            setLocalCss(originalCss);
+        }
+    }, [isOpen, originalCss]);
+
+    const handleCssChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+        const newCss = {
+            ...localCss,
+            [activeSelector]: e.target.value,
+        };
+        setLocalCss(newCss);
+        onSave(newCss); // Apply changes live for preview
+    };
+
+    const handleSave = () => {
+        onSave(localCss);
+        onClose();
+    };
+    
+    const handleClose = () => {
+        onSave(originalCss); // Revert changes on cancel
+        onClose();
+    };
+
+    const handleResetElementCss = () => {
+        const { [activeSelector]: _, ...rest } = localCss;
+        setLocalCss(rest);
+        onSave(rest);
+    };
+
+    return (
+        <div className="modal-overlay" style={{ zIndex: 1010 }} onClick={handleClose}>
+            <div className="modal element-customizer-modal" onClick={(e) => e.stopPropagation()}>
+                <button className="modal-close-btn" onClick={handleClose} aria-label="Close modal"><Icon name="close"/></button>
+                <div className="modal-header">
+                    <h3 className="modal-title no-edit">Customize Elements</h3>
+                </div>
+                <div className="element-customizer-body">
+                    <div className="element-customizer-sidebar">
+                        {CUSTOMIZABLE_ELEMENTS.map(el => (
+                            <button 
+                                key={el.selector} 
+                                onClick={() => setActiveSelector(el.selector)} 
+                                className={activeSelector === el.selector ? 'active' : ''}
+                            >
+                                {el.name}
+                            </button>
+                        ))}
+                    </div>
+                    <div className="element-customizer-content">
+                        <p className="modal-subtitle" style={{marginBottom: '8px'}}>Custom CSS for <code>{activeSelector}</code>. Changes are applied live.</p>
+                        <textarea
+                            value={localCss[activeSelector] || ''}
+                            onChange={handleCssChange}
+                            spellCheck="false"
+                            aria-label={`Custom CSS for ${activeSelector}`}
+                        />
+                         <div style={{ marginTop: '8px' }}>
+                            <button className="sidebar-btn delete" style={{ width: 'auto', margin: 0 }} onClick={handleResetElementCss}>
+                                Reset for this element
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div className="element-customizer-footer">
+                    <button className="sidebar-btn" onClick={handleClose} style={{margin: 0}}>Cancel</button>
+                    <button className="action-button" onClick={handleSave}>Save and Close</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+/**
+ * Dev Tooltip Component
+ */
+const DevTooltip = ({ content, x, y, visible }) => {
+    if (!visible) return null;
+    return (
+        <div 
+            className="dev-tooltip" 
+            style={{ top: y, left: x }}
+            dangerouslySetInnerHTML={{ __html: content }}
+        />
+    );
+};
+
+
+/**
+ * Main App Component
+ */
+const App = () => {
+  const themeManager = useTheme();
+
+  const [allUsers, setAllUsers] = useState<UserData[]>(() => {
+    const saved = localStorage.getItem('mosaic.allUsers');
+    return saved ? JSON.parse(saved) : INITIAL_USERS;
+  });
+  
+  const [boardMembers, setBoardMembers] = useState<BoardMember[]>(() => {
+    const saved = localStorage.getItem('mosaic.boardMembers');
+    return saved ? JSON.parse(saved) : INITIAL_BOARD_MEMBERS;
+  });
+
+  const [currentUser, setCurrentUser] = useState<UserData | null>(() => {
+      const saved = localStorage.getItem('mosaic.currentUser');
+      return saved ? JSON.parse(saved) : INITIAL_USERS[0];
+  });
+
+  const [availableLabels] = useState<LabelData[]>(AVAILABLE_LABELS_DATA);
+  
+  const [boardData, setBoardData] = useState<ListData[]>(() => {
+    try {
+        const savedData = localStorage.getItem('mosaic-board-data');
+        if (savedData) {
+            const parsed = JSON.parse(savedData);
+            let counter = 0;
+            return parsed.map(list => ({
+                ...list,
+                cards: list.cards.map(card => {
+                    counter++;
+                    return {
+                        ...card,
+                        cardShortId: card.cardShortId || counter,
+                        labels: card.labels || [],
+                        members: card.members || [],
+                        dueDate: card.dueDate || { timestamp: null, completed: false },
+                        startDate: card.startDate || null,
+                        location: card.location || '',
+                        checklists: (card.checklists || []).map(cl => ({
+                            ...cl,
+                            items: (cl.items || []).map(item => ({...item, attachments: item.attachments || []}))
+                        })),
+                        attachments: card.attachments || [],
+                        cover: card.cover || { size: 'normal' },
+                        subscribers: card.subscribers || [],
+                        comments: (card.comments || []).map(c => ({...c, attachments: c.attachments || []})),
+                        customFields: card.customFields || {},
+                        linkedCards: card.linkedCards || [],
+                    }
+                })
+            }));
+        }
+        
+        const cardId1 = generateId();
+        const cardId2 = generateId();
+        const cardId3 = generateId();
+        const cardId4 = generateId();
+        const MOCKUP_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23e0e0e0'/%3E%3Ctext x='50' y='55' font-size='12' text-anchor='middle' fill='%23999'%3EMockup%3C/text%3E%3C/svg%3E";
+
+         const initialData = [
+            {
+                id: 'list-1', title: 'Website Redesign', cards: [
+                    {
+                        id: cardId1, cardShortId: 1, text: 'Design new marketing website',
+                        description: 'Includes wireframes, mockups, and prototypes for the new homepage and feature pages. Focus on a clean, modern aesthetic with clear calls to action.',
+                        comments: [{id: generateId(), authorId: 'user-2', text: 'Great start, @Charlie! What do you think of the color palette?', timestamp: createTimestamp(), attachments: []}],
+                        activity: [createActivity('created this card.')],
+                        labels: ['label-3', 'label-5'], // Design, Research
+                        members: ['user-1'], // Alice
+                        dueDate: { timestamp: Date.now() + 5 * 24 * 60 * 60 * 1000, completed: false },
+                        startDate: Date.now() - 2 * 24 * 60 * 60 * 1000,
+                        location: "Design Studio",
+                        checklists: [{
+                            id: generateId(), title: 'Design Phases', items: [
+                                {id: generateId(), text: 'Research competitors', completed: true, attachments: []},
+                                {id: generateId(), text: 'Create wireframes', completed: true, attachments: []},
+                                {id: generateId(), text: 'Develop mockups', completed: false, attachments: [{ id: generateId(), url: MOCKUP_SVG, name: 'mockup-preview.svg', type: 'file', timestamp: createTimestamp(), previewUrl: MOCKUP_SVG }]},
+                                {id: generateId(), text: 'Finalize color palette', completed: false, attachments: []}
+                            ]
+                        }],
+                        attachments: [{id: generateId(), url: 'https://www.figma.com', name: 'Link: figma.com', timestamp: createTimestamp(), type: 'link'}],
+                        cover: { imageUrl: `https://picsum.photos/seed/${cardId1}/600/400` },
+                        subscribers: ['user-1'],
+                        customFields: { 'field-2': 'High'},
+                        linkedCards: []
+                    }
+                ]
+            },
+            {
+                id: 'list-2', title: 'Q2 Features', cards: [
+                    {
+                        id: cardId2, cardShortId: 2, text: 'Develop custom fields feature',
+                        description: 'Allow users to add custom fields like "Story Points" (number) or "Priority" (dropdown) to cards.',
+                        comments: [],
+                        activity: [createActivity('created this card.'), createActivity('linked card #3 to this card.')],
+                        labels: ['label-1', 'label-4'], // Feature, Docs
+                        members: ['user-1', 'user-2'], // Alice, Bob
+                        dueDate: { timestamp: Date.now() + 14 * 24 * 60 * 60 * 1000, completed: false },
+                        startDate: Date.now(),
+                        location: "",
+                        checklists: [
+                            { id: generateId(), title: 'Development Tasks', items: [
+                                { id: generateId(), text: 'API endpoints', completed: true, attachments: [] },
+                                { id: generateId(), text: 'Database schema update', completed: true, attachments: [] },
+                                { id: generateId(), text: 'Frontend UI implementation', completed: false, attachments: [] }
+                            ]}
+                        ],
+                        attachments: [],
+                        cover: { color: '#61BD4F' }, // Green
+                        subscribers: ['user-3'], // Charlie is watching
+                        customFields: { 'field-1': 8 },
+                        linkedCards: [cardId3],
+                    },
+                    {
+                        id: cardId3, cardShortId: 3, text: 'Write documentation for Custom Fields',
+                        description: 'Document the new custom fields feature for the public knowledge base.',
+                        comments: [],
+                        activity: [createActivity('created this card.')],
+                        labels: ['label-4'], // Docs
+                        members: ['user-3'], // Charlie
+                        dueDate: { timestamp: Date.now() + 18 * 24 * 60 * 60 * 1000, completed: false },
+                        startDate: null,
+                        location: "",
+                        checklists: [],
+                        attachments: [],
+                        cover: { },
+                        subscribers: [],
+                        customFields: {},
+                        linkedCards: [],
+                    }
+                ]
+            },
+            {
+                id: 'list-3', title: 'Done', cards: [
+                     {
+                        id: cardId4, cardShortId: 4, text: 'Refactor authentication module',
+                        description: 'Improve security and performance of the user login and session management.',
+                        comments: [],
+                        activity: [createActivity('completed this card.')],
+                        labels: ['label-2'], // Bug
+                        members: ['user-2'], // Bob
+                        dueDate: { timestamp: Date.now() - 3 * 24 * 60 * 60 * 1000, completed: true },
+                        startDate: Date.now() - 7 * 24 * 60 * 60 * 1000,
+                        location: "",
+                        checklists: [],
+                        attachments: [],
+                        cover: { },
+                        subscribers: [],
+                        customFields: {},
+                        linkedCards: [],
+                    }
+                ]
+            },
+        ];
+        return initialData;
+    } catch (error) {
+        console.error("Failed to parse board data from localStorage", error);
+        return [];
+    }
+  });
+  const [isAddingList, setIsAddingList] = useState(false);
+  const [selectedCard, setSelectedCard] = useState<{ listIndex: number; cardIndex: number } | null>(null);
+  const [filters, setFilters] = useState<Filters>({ query: '', members: [], labels: [], dueDate: 'any' });
+  const [isFilterPopoverOpen, setFilterPopoverOpen] = useState(false);
+  
+  type View = 'Board' | 'Calendar' | 'Timeline' | 'Table' | 'Dashboard' | 'Map';
+  const [view, setView] = useState<View>('Board');
+
+  const [notifications, setNotifications] = useState<NotificationData[]>([]);
+  const [isNotificationsOpen, setNotificationsOpen] = useState(false);
+  const [isAutomationModalOpen, setAutomationModalOpen] = useState(false);
+  const [isSettingsModalOpen, setSettingsModalOpen] = useState(false);
+  const [isElementCustomizerOpen, setElementCustomizerOpen] = useState(false);
+  const [lastMovedCard, setLastMovedCard] = useState<{id: string, direction: 'left' | 'right'} | null>(null);
+  const [isDevMode, setIsDevMode] = useState(false);
+  const [devTooltip, setDevTooltip] = useState<{visible: boolean; content: string; x: number; y: number}>({
+      visible: false, content: '', x: 0, y: 0,
+  });
+
+  const [automations, setAutomations] = useState<Automations>({
+      rules: [
+          {id: 'rule-1', name: "Complete card on move to Done", trigger: { type: 'card-move', toListId: 'list-3'}, action: { type: 'set-due-date-complete', completed: true }},
+          {id: 'rule-2', name: "Add Design label to bugs", trigger: { type: 'label-add', labelId: 'label-2'}, action: { type: 'add-label', labelId: 'label-3'}}
+      ],
+      scheduled: [
+          {id: 'sched-1', name: "Archive Done cards", schedule: 'weekly', targetListId: 'list-3', action: { type: 'post-comment', text: 'This card is scheduled for archival.' }}
+      ],
+      cardButtons: [
+          {id: 'btn-1', name: "Request Review", action: { type: 'add-member', memberId: 'user-2' }}
+      ],
+      boardButtons: []
+  });
+  
+  const [customFieldDefinitions, setCustomFieldDefinitions] = useState<CustomFieldDefinition[]>(() => {
+    const saved = localStorage.getItem('mosaic-custom-fields');
+    if (saved) return JSON.parse(saved);
+    return [
+        { id: 'field-1', name: 'Story Points', type: 'number' },
+        { id: 'field-2', name: 'Priority', type: 'dropdown', options: ['High', 'Medium', 'Low'] },
+    ];
+  });
+  
+  const [cardCounter, setCardCounter] = useState(() => {
+    const savedData = localStorage.getItem('mosaic-board-data');
+    if (savedData) {
+      try {
+        const allCards = JSON.parse(savedData).flatMap(l => l.cards);
+        return allCards.length > 0 ? Math.max(0, ...allCards.map(c => c.cardShortId || 0)) : 0;
+      } catch { return 0; }
+    }
+    return 4;
+  });
+  
+  const availableMembers = useMemo(() => {
+    const memberIds = boardMembers.map(bm => bm.userId);
+    return allUsers.filter(u => memberIds.includes(u.id)).map(u => ({ id: u.id, name: u.name, avatarUrl: u.avatarUrl }));
+  }, [allUsers, boardMembers]);
+  
+  const addNotification = useCallback((text: string, card: CardData, list: ListData) => {
+    const newNotification: NotificationData = {
+        id: generateId(), text, cardId: card.id, listId: list.id,
+        timestamp: createTimestamp(), read: false
+    };
+    setNotifications(prev => [newNotification, ...prev]);
+  }, []);
+  
+  useEffect(() => {
+    localStorage.setItem('mosaic.currentUser', JSON.stringify(currentUser));
+  }, [currentUser]);
+
+  useEffect(() => {
+    localStorage.setItem('mosaic.allUsers', JSON.stringify(allUsers));
+  }, [allUsers]);
+  
+  useEffect(() => {
+    localStorage.setItem('mosaic.boardMembers', JSON.stringify(boardMembers));
+  }, [boardMembers]);
+
+  useEffect(() => {
+    try {
+        const sanitizedData = getSanitizedBoardDataForStorage(boardData);
+        localStorage.setItem('mosaic-board-data', JSON.stringify(sanitizedData));
+    } catch(error) {
+        console.error("Failed to save board data to localStorage", error);
+        alert("Could not save board data. Your browser's storage might be full.");
+    }
+  }, [boardData]);
+  
+  useEffect(() => {
+    localStorage.setItem('mosaic-custom-fields', JSON.stringify(customFieldDefinitions));
+  }, [customFieldDefinitions]);
+  
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+        const activeElement = document.activeElement;
+        const isTyping = activeElement?.tagName === 'INPUT' || activeElement?.tagName === 'TEXTAREA';
+
+        if (e.key === 'Escape') {
+            if (isElementCustomizerOpen) setElementCustomizerOpen(false);
+            else if (selectedCard) handleCloseModal();
+            else if (isFilterPopoverOpen) setFilterPopoverOpen(false);
+            else if (isNotificationsOpen) setNotificationsOpen(false);
+            else if (isAutomationModalOpen) setAutomationModalOpen(false);
+            else if (isSettingsModalOpen) setSettingsModalOpen(false);
+            else if (isTyping) (activeElement as HTMLElement).blur();
+        }
+        
+        if (isTyping) return;
+
+        if (e.key === 'q') {
+            e.preventDefault();
+            setFilterPopoverOpen(true);
+        }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+}, [selectedCard, isFilterPopoverOpen, isNotificationsOpen, isAutomationModalOpen, isSettingsModalOpen, isElementCustomizerOpen]);
+
+useEffect(() => {
+    const checkDueDates = () => {
+        const now = Date.now();
+        const oneDay = 24 * 60 * 60 * 1000;
+
+        boardData.forEach(list => {
+            list.cards.forEach(card => {
+                if (card.dueDate?.timestamp && !card.dueDate.completed) {
+                    const dueTime = card.dueDate.timestamp;
+                    const isDueSoon = dueTime > now && dueTime < now + oneDay;
+                    
+                    if (isDueSoon) {
+                        const hasNotification = notifications.some(n => 
+                            n.cardId === card.id && n.text.includes('is due soon')
+                        );
+                        if (!hasNotification) {
+                            addNotification(`Card "${card.text}" is due soon.`, card, list);
+                        }
+                    }
+                }
+            });
+        });
+    };
+    
+    // Check on initial load
+    checkDueDates();
+    
+    // Then check every minute
+    const intervalId = setInterval(checkDueDates, 60000); 
+
+    return () => clearInterval(intervalId);
+}, [boardData, notifications, addNotification]);
+
+useEffect(() => {
+    const interval = setInterval(() => {
+        // console.log("Checking for scheduled automation commands...");
+    }, 60 * 1000);
+    return () => clearInterval(interval);
+}, [automations.scheduled, boardData]);
+
+useEffect(() => {
+    if (!isDevMode) {
+        setDevTooltip({ visible: false, content: '', x: 0, y: 0 });
+        return;
+    }
+
+    let currentTarget: HTMLElement | null = null;
+
+    const handleMouseMove = (e: MouseEvent) => {
+        const target = e.target as HTMLElement;
+        const componentEl = target.closest<HTMLElement>('[data-component-name]');
+
+        // Update position continuously
+        setDevTooltip(prev => ({ ...prev, x: e.clientX, y: e.clientY }));
+
+        // If we are on a new component, update the content
+        if (componentEl && componentEl !== currentTarget) {
+            currentTarget = componentEl;
+            const name = componentEl.getAttribute('data-component-name');
+            const description = componentEl.getAttribute('data-component-description');
+            setDevTooltip(prev => ({
+                ...prev,
+                visible: true,
+                content: `<strong>${name}</strong><p>${description}</p>`,
+            }));
+        } 
+        // If we moved off a component, hide the tooltip
+        else if (!componentEl && currentTarget) {
+            currentTarget = null;
+            setDevTooltip(prev => ({ ...prev, visible: false }));
+        }
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+
+    return () => {
+        document.removeEventListener('mousemove', handleMouseMove);
+    };
+}, [isDevMode]);
+
+
+  const permissions = usePermissions(currentUser, boardMembers);
+
+  const handleAddList = (title: string) => {
+    if (!permissions.canEditBoard) return;
+    const newList: ListData = { id: generateId(), title, cards: [] };
+    setBoardData([...boardData, newList]);
+    setIsAddingList(false);
+  };
+
+  const handleDeleteList = (listIndex: number) => {
+    if (!permissions.canEditBoard) return;
+    setBoardData(boardData.filter((_, index) => index !== listIndex));
+  };
+  
+  const handleUpdateListTitle = (listIndex: number, newTitle: string) => {
+    if (!permissions.canEditBoard) return;
+    const newBoardData = [...boardData];
+    newBoardData[listIndex].title = newTitle;
+    setBoardData(newBoardData);
+  };
+
+  const handleAddCard = (listIndex: number, text: string) => {
+    if (!permissions.canEditBoard) return;
+    const newCount = cardCounter + 1;
+    const newCard: CardData = { 
+      id: generateId(), text, description: '', comments: [],
+      activity: [createActivity('created this card.')], labels: [], members: [],
+      dueDate: { timestamp: null, completed: false }, startDate: null, location: '',
+      checklists: [], attachments: [], cover: {}, subscribers: [],
+      cardShortId: newCount, customFields: {}, linkedCards: [],
+    };
+    const newBoardData = [...boardData];
+    newBoardData[listIndex].cards.push(newCard);
+    setBoardData(newBoardData);
+    setCardCounter(newCount);
+  };
+  
+  const getWatchedUpdateText = (oldCard, newCard) => {
+      if (oldCard.description !== newCard.description) return "Description was updated";
+      if (oldCard.dueDate.timestamp !== newCard.dueDate.timestamp) return "Due date was changed";
+      if (oldCard.dueDate.completed !== newCard.dueDate.completed) return newCard.dueDate.completed ? "Due date was marked complete" : "Due date was marked incomplete";
+      return null;
+  }
+  
+  const handleUpdateCard = (listIndex: number, cardIndex: number, updates: Partial<CardData>, isAutomated: boolean = false) => {
+      const newBoardData = [...boardData];
+      const oldCard = newBoardData[listIndex].cards[cardIndex];
+      const list = newBoardData[listIndex];
+
+      const updatedCard = { ...oldCard, ...updates };
+      
+      if (!isAutomated && currentUser) {
+        if (updates.members) {
+            const newlyAddedMembers = updates.members.filter(memberId => !oldCard.members.includes(memberId));
+            newlyAddedMembers.forEach(memberId => {
+                const member = availableMembers.find(m => m.id === memberId);
+                if (member) {
+                    addNotification(`${currentUser.name} assigned ${member.name} to "${updatedCard.text}"`, updatedCard, list);
+                }
+            });
+        }
+        
+        const watchedUpdateText = getWatchedUpdateText(oldCard, updatedCard);
+        if (watchedUpdateText) {
+            updatedCard.subscribers.forEach(id => {
+                if (id !== currentUser.id) {
+                    addNotification(`${watchedUpdateText} on "${updatedCard.text}"`, updatedCard, list)
+                }
+            })
+        }
+      }
+      
+      newBoardData[listIndex].cards[cardIndex] = updatedCard;
+      setBoardData(newBoardData);
+
+      if (!isAutomated) {
+          if (updates.labels) {
+              const addedLabels = updates.labels.filter(l => !oldCard.labels.includes(l));
+              addedLabels.forEach(labelId => runAutomations({type: 'label-add', labelId}, updatedCard, list));
+          }
+      }
+  };
+  
+  const handleAddComment = (listIndex: number, cardIndex: number, commentText: string, attachments: AttachmentData[]) => {
+      if (!permissions.canComment || !currentUser) return;
+      const newBoardData = [...boardData];
+      const card = newBoardData[listIndex].cards[cardIndex];
+      const list = newBoardData[listIndex];
+      const newComment: CommentData = { 
+        id: generateId(), authorId: currentUser.id, text: commentText, timestamp: createTimestamp(), attachments 
+      };
+      card.comments.unshift(newComment);
+      
+      const activityText = attachments.length > 0 
+        ? `${currentUser.name} added a comment and attached ${attachments.length} file(s).`
+        : `${currentUser.name} added a comment.`
+      card.activity.unshift(createActivity(activityText));
+      
+      const mentionedUserIds = (commentText.match(/@(\w+)/g) || [])
+          .map(mentionStr => {
+              const memberName = mentionStr.substring(1);
+              const member = availableMembers.find(m => m.name === memberName);
+              return member ? member.id : null;
+          })
+          .filter(id => id !== null && id !== currentUser.id) as string[];
+
+      // Notify mentioned users
+      mentionedUserIds.forEach(userId => {
+          const member = availableMembers.find(m => m.id === userId);
+          if (member) {
+              addNotification(`${currentUser.name} mentioned ${member.name} in a comment on "${card.text}"`, card, list);
+          }
+      });
+
+      // Notify subscribers who were not mentioned
+      card.subscribers.forEach(subscriberId => {
+          if (subscriberId !== currentUser.id && !mentionedUserIds.includes(subscriberId)) {
+              addNotification(`${currentUser.name} commented on "${card.text}"`, card, list);
+          }
+      });
+      
+      setBoardData(newBoardData);
+  };
+  
+  const handleDeleteCard = (listIndex: number, cardIndex: number) => {
+      if (!permissions.canDeleteCard) return;
+      const newBoardData = [...boardData];
+      newBoardData[listIndex].cards.splice(cardIndex, 1);
+      setBoardData(newBoardData);
+      handleCloseModal();
+  };
+
+  const handleCardClick = (listIndex: number, cardIndex: number) => {
+      setSelectedCard({ listIndex, cardIndex });
+  };
+  
+  const handleCloseModal = () => {
+      setSelectedCard(null);
+  };
+
+  const moveCard = (sourceListIndex: number, sourceCardIndex: number, destListIndex: number, destCardIndex: number, isAutomated: boolean = false) => {
+    if (!permissions.canEditBoard) return;
+    if (sourceListIndex === destListIndex && sourceCardIndex === destCardIndex) return;
+    
+    const newBoardData = [...boardData];
+    const sourceList = newBoardData[sourceListIndex];
+    const destList = newBoardData[destListIndex];
+    const [draggedCard] = sourceList.cards.splice(sourceCardIndex, 1);
+    
+    if (!isAutomated && currentUser) {
+        if (sourceListIndex !== destListIndex) {
+            const direction = destListIndex > sourceListIndex ? 'right' : 'left';
+            setLastMovedCard({ id: draggedCard.id, direction });
+            setTimeout(() => setLastMovedCard(null), 400); // Match CSS duration
+
+            draggedCard.activity.unshift(createActivity(`moved this card from ${sourceList.title} to ${destList.title}`));
+            draggedCard.subscribers.forEach(id => {
+                if (id !== currentUser.id) {
+                    addNotification(`"${draggedCard.text}" was moved to ${destList.title}`, draggedCard, destList);
+                }
+            });
+        }
+    }
+    
+    destList.cards.splice(destCardIndex, 0, draggedCard);
+    setBoardData(newBoardData);
+    
+    if(selectedCard) {
+        if(selectedCard.listIndex === sourceListIndex && selectedCard.cardIndex === sourceCardIndex) {
+            setSelectedCard({listIndex: destListIndex, cardIndex: destCardIndex});
+        }
+    }
+    
+    if (!isAutomated) {
+        runAutomations({ type: 'card-move', toListId: destList.id }, draggedCard, destList);
+    }
+  };
+
+  const executeAutomationAction = (action: AutomationAction, cardId: string) => {
+    let listIndex = -1;
+    let cardIndex = -1;
+    let card: CardData | null = null;
+
+    for (let i = 0; i < boardData.length; i++) {
+        const cIndex = boardData[i].cards.findIndex(c => c.id === cardId);
+        if (cIndex !== -1) {
+            listIndex = i; cardIndex = cIndex; card = boardData[i].cards[cIndex];
+            break;
+        }
+    }
+    if (!card) return;
+
+    switch (action.type) {
+        case 'move-to-list':
+            const destListIndex = boardData.findIndex(l => l.id === action.listId);
+            if (destListIndex !== -1 && listIndex !== destListIndex) {
+                moveCard(listIndex, cardIndex, destListIndex, 0, true);
+            }
+            break;
+        case 'set-due-date-complete':
+            handleUpdateCard(listIndex, cardIndex, { dueDate: { ...card.dueDate, completed: action.completed } }, true);
+            break;
+        case 'add-label':
+            if (!card.labels.includes(action.labelId)) {
+                handleUpdateCard(listIndex, cardIndex, { labels: [...card.labels, action.labelId] }, true);
+            }
+            break;
+        case 'add-member':
+             if (!card.members.includes(action.memberId)) {
+                handleUpdateCard(listIndex, cardIndex, { members: [...card.members, action.memberId] }, true);
+            }
+            break;
+        case 'add-checklist':
+            const newChecklist: ChecklistData = { id: generateId(), title: action.title, items: [] };
+            handleUpdateCard(listIndex, cardIndex, { checklists: [...card.checklists, newChecklist] }, true);
+            break;
+        case 'post-comment':
+            const newComment: CommentData = { id: generateId(), authorId: 'automation-bot', text: action.text, timestamp: createTimestamp(), attachments: [] };
+            handleUpdateCard(listIndex, cardIndex, { comments: [newComment, ...card.comments] }, true);
+            break;
+    }
+  };
+  
+  const runAutomations = (trigger: AutomationTrigger, card: CardData, list: ListData) => {
+      automations.rules.forEach(rule => {
+          let triggerMet = false;
+          if (rule.trigger.type === 'card-move' && trigger.type === 'card-move') {
+              if (rule.trigger.toListId === trigger.toListId) {
+                  triggerMet = true;
+              }
+          } else if (rule.trigger.type === 'label-add' && trigger.type === 'label-add') {
+              if (rule.trigger.labelId === trigger.labelId) {
+                  triggerMet = true;
+              }
+          }
+
+          if (triggerMet) {
+              console.log(`Automation rule triggered: ${rule.name}`);
+              executeAutomationAction(rule.action, card.id);
+          }
+      });
+  };
+  
+  const handleNotificationClick = (notification: NotificationData) => {
+      const listIndex = boardData.findIndex(l => l.id === notification.listId);
+      if (listIndex === -1) return;
+      const cardIndex = boardData[listIndex].cards.findIndex(c => c.id === notification.cardId);
+      if (cardIndex === -1) return;
+      
+      handleCardClick(listIndex, cardIndex);
+      setNotifications(prev => prev.map(n => n.id === notification.id ? {...n, read: true} : n));
+      setNotificationsOpen(false);
+  };
+
+  const markAllNotificationsRead = () => {
+      setNotifications(prev => prev.map(n => ({...n, read: true})));
+  };
+  
+  const handleClearData = () => {
+    localStorage.clear();
+    window.location.reload();
+  };
+  
+  const visibilityMap = useMemo(() => {
+    const map: { [cardId: string]: boolean } = {};
+    const isFiltersActive = filters.query.length > 0 || filters.members.length > 0 || filters.labels.length > 0 || filters.dueDate !== 'any';
+    
+    if (!isFiltersActive) {
+        boardData.forEach(list => list.cards.forEach(card => map[card.id] = true));
+        return map;
+    }
+
+    boardData.forEach(list => {
+        list.cards.forEach(card => {
+            let isVisible = true;
+            const query = filters.query.toLowerCase();
+            if (query && !card.text.toLowerCase().includes(query) && !card.description.toLowerCase().includes(query)) {
+                isVisible = false;
+            }
+
+            if (isVisible && filters.members.length > 0) {
+                if (filters.members.includes('no-members')) {
+                    if (card.members.length > 0) isVisible = false;
+                } else if (!card.members.some(mId => filters.members.includes(mId))) {
+                    isVisible = false;
+                }
+            }
+
+            if (isVisible && filters.labels.length > 0) {
+                 if (filters.labels.includes('no-labels')) {
+                    if (card.labels.length > 0) isVisible = false;
+                } else if (!card.labels.some(lId => filters.labels.includes(lId))) {
+                    isVisible = false;
+                }
+            }
+            
+            if (isVisible && filters.dueDate !== 'any') {
+                const status = getDueDateStatus(card.dueDate);
+                if (filters.dueDate !== status) {
+                    isVisible = false;
+                }
+            }
+            
+            map[card.id] = isVisible;
+        });
+    });
+    return map;
+  }, [boardData, filters]);
+  
+    const handleExportJson = useCallback(() => {
+        const backupData = {
+            boardData,
+            customFieldDefinitions,
+            automations,
+            boardMembers,
+            cardCounter,
+        };
+        const jsonString = JSON.stringify(backupData, null, 2);
+        const blob = new Blob([jsonString], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `mosaic-board-backup-${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }, [boardData, customFieldDefinitions, automations, boardMembers, cardCounter]);
+
+    const handleExportCsv = useCallback(() => {
+        const header = [
+            'Card ID', 'Card Title', 'Description', 'List', 'Labels', 'Members', 
+            'Due Date', 'Start Date', 'Location', 'Is Completed', 
+            'Checklists (Completed/Total)', 'Attachments (Count)', 'Comments (Count)'
+        ];
+
+        const rows = boardData.flatMap(list => 
+            list.cards.map(card => {
+                const labels = card.labels.map(id => availableLabels.find(l => l.id === id)?.text).filter(Boolean).join(', ');
+                const members = card.members.map(id => availableMembers.find(m => m.id === id)?.name).filter(Boolean).join(', ');
+                const checklists = card.checklists.map(cl => {
+                    const total = cl.items.length;
+                    const completed = cl.items.filter(i => i.completed).length;
+                    return `${cl.title}: ${completed}/${total}`;
+                }).join('; ');
+
+                return [
+                    card.cardShortId,
+                    `"${card.text.replace(/"/g, '""')}"`, // Escape quotes
+                    `"${card.description.replace(/"/g, '""')}"`,
+                    list.title,
+                    labels,
+                    members,
+                    card.dueDate.timestamp ? new Date(card.dueDate.timestamp).toISOString() : '',
+                    card.startDate ? new Date(card.startDate).toISOString() : '',
+                    card.location,
+                    card.dueDate.completed,
+                    checklists,
+                    card.attachments.length,
+                    card.comments.length,
+                ].join(',');
+            })
+        );
+        
+        const csvContent = [header.join(','), ...rows].join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `mosaic-board-export-${new Date().toISOString().split('T')[0]}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+    }, [boardData, availableLabels, availableMembers]);
+
+    const handleImportJson = useCallback((file: File) => {
+        if (!window.confirm('This will overwrite your current board with the imported data. Are you sure you want to continue?')) {
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            try {
+                const imported = JSON.parse(event.target.result as string);
+                if (
+                    !imported.boardData || 
+                    !imported.customFieldDefinitions || 
+                    !imported.automations || 
+                    !imported.boardMembers ||
+                    typeof imported.cardCounter === 'undefined'
+                ) {
+                    throw new Error("Invalid or corrupted backup file.");
+                }
+                
+                setBoardData(imported.boardData);
+                setCustomFieldDefinitions(imported.customFieldDefinitions);
+                setAutomations(imported.automations);
+                setBoardMembers(imported.boardMembers);
+                setCardCounter(imported.cardCounter);
+
+                alert('Board restored successfully!');
+            } catch (e) {
+                alert('Failed to import board data. The file may be invalid or corrupted.');
+                console.error("Failed to import board", e);
+            }
+        };
+        reader.readAsText(file);
+    }, []);
+
+  const currentCard = selectedCard ? boardData[selectedCard.listIndex].cards[selectedCard.cardIndex] : null;
+  const isFiltersActive = filters.query.length > 0 || filters.members.length > 0 || filters.labels.length > 0 || filters.dueDate !== 'any';
+  const unreadNotificationsCount = notifications.filter(n => !n.read).length;
+
+  // --- Share/Member Handlers ---
+  const handleInviteUser = (userId: string) => {
+    if (!permissions.canManageMembers) return;
+    setBoardMembers(prev => [...prev, { userId, role: 'member' }]);
+  };
+
+  const handleUpdateRole = (userId: string, role: Role) => {
+    if (!permissions.canManageMembers) return;
+    setBoardMembers(prev => prev.map(bm => bm.userId === userId ? { ...bm, role } : bm));
+  };
+
+  const handleRemoveMember = (userId: string) => {
+    if (!permissions.canManageMembers) return;
+    setBoardMembers(prev => prev.filter(bm => bm.userId !== userId));
+  };
+
+  const renderView = () => {
+    switch (view) {
+        case 'Calendar': return <CalendarView boardData={boardData} onCardClick={handleCardClick} />;
+        case 'Timeline': return <TimelineView boardData={boardData} onCardClick={handleCardClick} />;
+        case 'Table': return <TableView boardData={boardData} onCardClick={handleCardClick} availableLabels={availableLabels} availableMembers={availableMembers}/>;
+        case 'Dashboard': return <DashboardView boardData={boardData} availableLabels={availableLabels} availableMembers={availableMembers}/>;
+        case 'Map': return <MapView boardData={boardData} onCardClick={handleCardClick} />;
+        case 'Board': default:
+            return (
+                <div className="board">
+                    {boardData.map((list, index) => (
+                      <List
+                        key={list.id} list={list} listIndex={index} permissions={permissions} visibilityMap={visibilityMap}
+                        onUpdateListTitle={handleUpdateListTitle} onDeleteList={handleDeleteList}
+                        onAddCard={handleAddCard} onCardClick={handleCardClick} moveCard={moveCard}
+                        availableLabels={availableLabels} availableMembers={availableMembers}
+                        lastMovedCard={lastMovedCard}
+                      />
+                    ))}
+                    {permissions.canEditBoard && <div className={`list-container ${!isAddingList ? 'add-list-placeholder' : ''}`}>
+                      {isAddingList ? (
+                        <AddItemForm
+                          placeholder="Enter list title..." buttonText="Add List"
+                          onSubmit={handleAddList} onCancel={() => setIsAddingList(false)}
+                          className="add-list-form"
+                        />
+                      ) : (
+                        <button className="add-list-btn" onClick={() => setIsAddingList(true)} aria-label="Add another list">
+                          <Icon name="add" size={20} />
+                          <span>Add another list</span>
+                        </button>
+                      )}
+                    </div>}
+                </div>
+            );
+    }
+  };
+
+  return (
+    <>
+      <header data-component-name="Main Header" data-component-description="The main application header containing the board title, view switcher, and primary action buttons like filter and share.">
+        <h1>MosaicBoard</h1>
+        <div className="header-center">
+            <div className="view-switcher">
+                {(['Board', 'Calendar', 'Timeline', 'Table', 'Dashboard', 'Map'] as View[]).map(v => (
+                    <button key={v} className={view === v ? 'active' : ''} onClick={() => setView(v)}>{v}</button>
+                ))}
+            </div>
+        </div>
+        <div className="header-right">
+            <div className="popover-wrapper">
+                <button className="filter-button" onClick={() => setFilterPopoverOpen(o => !o)}>
+                    <Icon name="filter_list" size={20}/>
+                    <span>Filter</span>
+                    {isFiltersActive && <span className="filter-active-indicator" />}
+                </button>
+                {isFilterPopoverOpen && (
+                    <FilterPopover 
+                        filters={filters}
+                        onFiltersChange={setFilters}
+                        onClose={() => setFilterPopoverOpen(false)}
+                        availableLabels={availableLabels}
+                        availableMembers={availableMembers}
+                    />
+                )}
+            </div>
+            {permissions.canManageSettings && <button className="header-btn icon-only" onClick={() => setAutomationModalOpen(true)} aria-label="Automation"><Icon name="smart_toy" /></button>}
+            <div className="popover-wrapper">
+                <button className="header-btn icon-only" onClick={() => setNotificationsOpen(o => !o)} aria-label="Notifications">
+                    <Icon name="notifications" />
+                    {unreadNotificationsCount > 0 && <span className="notification-badge">{unreadNotificationsCount}</span>}
+                </button>
+                {isNotificationsOpen && (
+                    <NotificationsPopover
+                        notifications={notifications}
+                        onNotificationClick={handleNotificationClick}
+                        onMarkAllRead={markAllNotificationsRead}
+                        onClose={() => setNotificationsOpen(false)}
+                    />
+                )}
+            </div>
+             <div className="user-profile">
+                <img src={currentUser.avatarUrl} alt={currentUser.name} className="member-avatar" />
+             </div>
+             <button className="header-btn icon-only" onClick={() => setSettingsModalOpen(true)} aria-label="Settings"><Icon name="settings"/></button>
+        </div>
+      </header>
+      <main className={`main-container view-${view.toLowerCase()}`}>
+        {renderView()}
+      </main>
+      {selectedCard && currentCard && (
+        <CardModal 
+            card={currentCard}
+            listTitle={boardData[selectedCard.listIndex].title}
+            onClose={handleCloseModal}
+            onUpdateCard={(updates) => handleUpdateCard(selectedCard.listIndex, selectedCard.cardIndex, updates)}
+            onAddComment={(commentText, attachments) => handleAddComment(selectedCard.listIndex, selectedCard.cardIndex, commentText, attachments)}
+            onDeleteCard={() => handleDeleteCard(selectedCard.listIndex, selectedCard.cardIndex)}
+            availableLabels={availableLabels}
+            availableMembers={availableMembers}
+            currentUser={currentUser}
+            permissions={permissions}
+            customButtons={automations.cardButtons}
+            executeCustomButton={(button, cardId) => executeAutomationAction(button.action, cardId)}
+            customFieldDefinitions={customFieldDefinitions}
+            boardData={boardData}
+        />
+      )}
+      <AutomationModal
+        isOpen={isAutomationModalOpen}
+        onClose={() => setAutomationModalOpen(false)}
+        automations={automations}
+        onUpdate={setAutomations}
+        boardData={boardData}
+        availableLabels={availableLabels}
+        availableMembers={availableMembers}
+      />
+      <SettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={() => setSettingsModalOpen(false)}
+        onClearData={handleClearData}
+        onOpenElementCustomizer={() => setElementCustomizerOpen(true)}
+        onExportJson={handleExportJson}
+        onExportCsv={handleExportCsv}
+        onImportJson={handleImportJson}
+        isDevMode={isDevMode}
+        onToggleDevMode={() => setIsDevMode(p => !p)}
+        members={availableMembers} 
+        allUsers={allUsers}
+        boardMembers={boardMembers}
+        onInvite={handleInviteUser} 
+        onUpdateRole={handleUpdateRole}
+        onRemoveMember={handleRemoveMember}
+        permissions={permissions}
+        definitions={customFieldDefinitions}
+        onUpdateDefinitions={setCustomFieldDefinitions}
+        {...themeManager}
+      />
+       <ElementCustomizerModal
+        isOpen={isElementCustomizerOpen}
+        onClose={() => setElementCustomizerOpen(false)}
+        originalCss={themeManager.customCss}
+        onSave={themeManager.updateCustomCss}
+      />
+      <DevTooltip visible={devTooltip.visible} content={devTooltip.content} x={devTooltip.x} y={devTooltip.y} />
+    </>
+  );
+};
+
 const container = document.getElementById('root');
-if (container) {
-  const root = createRoot(container);
-  root.render(<App />);
-}
+const root = createRoot(container!);
+root.render(<App />);
