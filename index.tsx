@@ -135,17 +135,18 @@ const loadTheme = (): Theme => {
 };
 
 const saveTheme = (theme: Theme): void => {
+  // Create a clean theme object with only the essential data
+  const cleanTheme: Theme = {
+    mode: theme.mode,
+    accent: theme.accent,
+    radius: theme.radius,
+    density: theme.density,
+    fontScale: theme.fontScale,
+    reducedMotion: theme.reducedMotion,
+    boardBackground: theme.boardBackground // Only store the enum value, not CSS
+  };
+  
   try {
-    // Create a clean theme object with only the essential data
-    const cleanTheme: Theme = {
-      mode: theme.mode,
-      accent: theme.accent,
-      radius: theme.radius,
-      density: theme.density,
-      fontScale: theme.fontScale,
-      reducedMotion: theme.reducedMotion,
-      boardBackground: theme.boardBackground // Only store the enum value, not CSS
-    };
     localStorage.setItem('mosaic.theme', JSON.stringify(cleanTheme));
   } catch (error) {
     console.error('Failed to save theme to localStorage:', error);
