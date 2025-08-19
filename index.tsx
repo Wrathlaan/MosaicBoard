@@ -2513,10 +2513,10 @@ const SettingsModal = ({ isOpen, onClose, onClearData, theme, updateTheme, reset
                                     <h5>Feedback & Contributions</h5>
                                     <p>This app is in development and is not feature complete. Found a bug or have an idea for a new feature? Let us know on GitHub!</p>
                                     <div className="theme-actions">
-                                        <a href="https://github.com/alanwarrick/mosaic-board/issues/new?template=bug_report.md" target="_blank" rel="noopener noreferrer" className="sidebar-btn">
+                                        <a href="https://github.com/Wrathlaan/MosaicBoard/issues/new?template=bug_report.md" target="_blank" rel="noopener noreferrer" className="sidebar-btn">
                                             <Icon name="bug_report" size={20}/> Report a Bug
                                         </a>
-                                        <a href="https://github.com/alanwarrick/mosaic-board/issues/new?template=feature_request.md" target="_blank" rel="noopener noreferrer" className="sidebar-btn">
+                                        <a href="https://github.com/Wrathlaan/MosaicBoard/issues/new?template=feature_request.md" target="_blank" rel="noopener noreferrer" className="sidebar-btn">
                                             <Icon name="lightbulb" size={20}/> Request a Feature
                                         </a>
                                     </div>
@@ -2999,12 +2999,7 @@ useEffect(() => {
     return () => clearInterval(intervalId);
 }, [boardData, notifications, addNotification]);
 
-useEffect(() => {
-    const interval = setInterval(() => {
-        // console.log("Checking for scheduled automation commands...");
-    }, 60 * 1000);
-    return () => clearInterval(interval);
-}, [automations.scheduled, boardData]);
+
 
 useEffect(() => {
     if (view !== 'Board') return;
@@ -3349,7 +3344,6 @@ useEffect(() => {
           }
 
           if (triggerMet) {
-              console.log(`Automation rule triggered: ${rule.name}`);
               executeAutomationAction(rule.action, card.id);
           }
       });
